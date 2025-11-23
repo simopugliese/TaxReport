@@ -13,6 +13,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.InputStream;
+import java.text.Normalizer;
 import java.time.LocalDate;
 import java.time.format.DateTimeParseException;
 import java.util.UUID;
@@ -34,7 +35,7 @@ class ExpenseServiceImpl implements ExpenseService {
 
     @Override
     public void initYear(int year) {
-        logger.info("Inizializzazione anno fiscale {}", year);
+        logger.info("Pre-caricamento regole anno fiscale {}", year);
         ruleEngine.loadRules(year);
     }
 
@@ -52,12 +53,18 @@ class ExpenseServiceImpl implements ExpenseService {
             throw new ValidationException("Formato data non valido (richiesto YYYY-MM-DD).");
         }
 
-        String safeDesc = dto.description().replaceAll("[^a-zA-Z0-9]", "_");
-        String dateStr = dto.dateRaw().replace("-", "");
+        // 1. Sanitizzazione Descrizione (Normalizza accenti e rimuove caratteri speciali)
+        String normalized = Normalizer.normalize(dto.description(), Normalizer.Form.NFD);
+        String safeDesc = normalized.replaceAll("[^\\p{ASCII}]", "") // Rimuove accenti separati
+                .replaceAll("[^a-zA-Z0-9]", "_"); // Sostituisce non alfanumerici con _
 
+        String dateStr = dto.dateRaw().replace("-", ""); // 20241021
+
+        // Base Path: /2024/CODICE/CATEGORIA/YYYYMMDD_Descrizione
         String relativeBasePath = String.format("/%d/%s/%s/%s_%s",
                 dto.year(), dto.fiscalCode(), dto.categoryId(), dateStr, safeDesc);
 
+        // 2. Gestione Collisioni
         String finalPath = relativeBasePath;
         int counter = 1;
         while (storage.exists(finalPath)) {
@@ -65,6 +72,7 @@ class ExpenseServiceImpl implements ExpenseService {
             finalPath = relativeBasePath + "_" + counter++;
         }
 
+        // 3. Creazione Cartella
         try {
             boolean created = storage.createDirectory(finalPath);
             if (!created) {
@@ -77,6 +85,7 @@ class ExpenseServiceImpl implements ExpenseService {
         ExpenseEntry entry = new ExpenseEntry(UUID.randomUUID(), dto.categoryId(), date, dto.description());
         entry.setPhysicalPath(finalPath);
 
+        // 4. Applicazione Regole (Multi-anno gestito da RuleEngine)
         ruleEngine.applyRules(entry);
 
         repository.save(entry);
@@ -97,22 +106,50 @@ class ExpenseServiceImpl implements ExpenseService {
             throw new ValidationException("Impossibile modificare una spesa in anno chiuso (LOCKED).");
         }
 
-        String standardName = ruleEngine.getStandardFilename(type);
-        storage.saveFile(entry.getPhysicalPath(), standardName, content);
-
+        // 1. Recupero Slot e Nome Previsto (dal JSON)
         var slot = entry.getSlot(type);
         if (slot == null) {
             throw new ValidationException("Documento tipo " + type + " non previsto per questa categoria.");
         }
-        slot.fill(standardName, 0);
 
-        ValidationStatus newStatus = ruleEngine.validate(entry);
-        entry.setStatus(newStatus);
+        // FIX: Usiamo il nome previsto dallo slot, non uno switch hardcoded
+        String targetFilename = slot.getExpectedFilename();
 
-        repository.updateStatus(uid, newStatus);
-        repository.save(entry);
+        // 2. Salvataggio fisico
+        storage.saveFile(entry.getPhysicalPath(), targetFilename, content);
 
-        logger.info("Upload completato. Nuovo stato: {}", newStatus);
+        // 3. Aggiornamento Slot
+        slot.fill(targetFilename, 0);
+
+        // 4. Ricalcolo Stato
+        updateStatusAndSave(entry, uid);
+
+        logger.info("Upload completato.");
+    }
+
+    @Override
+    public void deleteDocument(String expenseId, DocType type) {
+        UUID uid = UUID.fromString(expenseId);
+        ExpenseEntry entry = repository.findById(uid)
+                .orElseThrow(() -> new ValidationException("Spesa non trovata."));
+
+        if (entry.getStatus() == ValidationStatus.LOCKED) {
+            throw new ValidationException("Impossibile eliminare file in anno chiuso.");
+        }
+
+        var slot = entry.getSlot(type);
+        if (slot != null && slot.isFilled()) {
+            // 1. Cancella Fisico
+            String filename = slot.getCurrentFile().filename();
+            storage.deleteFile(entry.getPhysicalPath(), filename);
+
+            // 2. Pulisci Logico
+            slot.clear();
+
+            // 3. Ricalcola Stato
+            updateStatusAndSave(entry, uid);
+            logger.info("Documento {} cancellato.", type);
+        }
     }
 
     @Override
@@ -121,6 +158,7 @@ class ExpenseServiceImpl implements ExpenseService {
         ExpenseEntry entry = repository.findById(uid)
                 .orElseThrow(() -> new ValidationException("Spesa non trovata."));
 
+        // Mapping manuale verso DTO
         var slotsStatus = entry.getSlots().values().stream()
                 .collect(Collectors.toMap(DocumentSlot::getType, DocumentSlot::isFilled));
 
@@ -136,5 +174,12 @@ class ExpenseServiceImpl implements ExpenseService {
                 slotsStatus,
                 missingDocs
         );
+    }
+
+    private void updateStatusAndSave(ExpenseEntry entry, UUID uid) {
+        ValidationStatus newStatus = ruleEngine.validate(entry);
+        entry.setStatus(newStatus);
+        repository.updateStatus(uid, newStatus);
+        repository.save(entry);
     }
 }

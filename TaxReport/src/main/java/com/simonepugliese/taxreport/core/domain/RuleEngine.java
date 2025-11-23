@@ -15,13 +15,17 @@ import java.util.concurrent.ConcurrentHashMap;
 // Singleton o Managed Bean (instanziato dal Service)
 public class RuleEngine {
     private final ObjectMapper mapper = new ObjectMapper();
-    private final Map<String, CategoryRule> rules = new ConcurrentHashMap<>();
-    private boolean initialized = false;
+    // Cache multi-anno: Anno -> (CategoriaID -> Regola)
+    private final Map<Integer, Map<String, CategoryRule>> rulesCache = new ConcurrentHashMap<>();
 
     /**
-     * Carica il file rules_{year}.json dal classpath.
+     * Carica le regole per un anno specifico se non sono già in cache.
      */
     public void loadRules(int year) {
+        if (rulesCache.containsKey(year)) {
+            return; // Già caricate, risparmiamo I/O
+        }
+
         String resourceName = "/rules_" + year + ".json";
         try (InputStream is = getClass().getResourceAsStream(resourceName)) {
             if (is == null) {
@@ -29,24 +33,31 @@ public class RuleEngine {
             }
             List<CategoryRule> loadedRules = mapper.readValue(is, new TypeReference<>() {});
 
-            this.rules.clear();
+            Map<String, CategoryRule> yearMap = new ConcurrentHashMap<>();
             for (CategoryRule r : loadedRules) {
-                this.rules.put(r.id(), r);
+                yearMap.put(r.id(), r);
             }
-            this.initialized = true;
+            rulesCache.put(year, yearMap);
+
         } catch (IOException e) {
             throw new ConfigurationException("Errore parsing regole JSON per l'anno " + year + ": " + e.getMessage());
         }
     }
 
     /**
-     * Inizializza gli slot di una nuova spesa in base alla categoria.
+     * Inizializza gli slot di una nuova spesa usando l'anno della spesa stessa.
      */
     public void applyRules(ExpenseEntry entry) {
-        ensureInitialized();
-        CategoryRule rule = rules.get(entry.getCategoryId());
+        int year = entry.getDate().getYear();
+
+        // Assicura che le regole per quell'anno siano caricate
+        loadRules(year);
+
+        Map<String, CategoryRule> yearRules = rulesCache.get(year);
+        CategoryRule rule = yearRules.get(entry.getCategoryId());
+
         if (rule == null) {
-            throw new ConfigurationException("Categoria sconosciuta: " + entry.getCategoryId());
+            throw new ConfigurationException("Categoria sconosciuta '" + entry.getCategoryId() + "' per l'anno " + year);
         }
 
         for (Requirement req : rule.requirements()) {
@@ -55,22 +66,7 @@ public class RuleEngine {
     }
 
     /**
-     * Ritorna il nome file standard per quel tipo di documento (es. "Fattura.pdf").
-     * Nota: Questo è un helper generico. In un sistema più complesso dipenderebbe dalla Category.
-     * Per ora usiamo una convenzione statica o definita nel primo requisito trovato.
-     */
-    public String getStandardFilename(DocType type) {
-        return switch (type) {
-            case INVOICE -> "Fattura.pdf";
-            case RECEIPT -> "Scontrino.pdf";
-            case PAYMENT -> "Pagamento.pdf";
-            case PRESCRIPTION -> "Ricetta.pdf";
-            case REPORT -> "Referto.pdf";
-        };
-    }
-
-    /**
-     * Cuore della validazione: decide il colore del semaforo.
+     * Valida lo stato della spesa basandosi sugli slot riempiti.
      */
     public ValidationStatus validate(ExpenseEntry entry) {
         if (entry.getStatus() == ValidationStatus.LOCKED) {
@@ -97,13 +93,7 @@ public class RuleEngine {
         return ValidationStatus.COMPLIANT;
     }
 
-    private void ensureInitialized() {
-        if (!initialized) {
-            throw new ConfigurationException("RuleEngine non inizializzato. Chiamare initYear() prima.");
-        }
-    }
-
+    // Record interni mappati sul JSON
     record CategoryRule(String id, String description, List<Requirement> requirements) {}
-
     record Requirement(DocType type, boolean mandatory, String filenameConvention) {}
 }

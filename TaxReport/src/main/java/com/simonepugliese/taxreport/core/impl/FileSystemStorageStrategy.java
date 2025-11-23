@@ -43,6 +43,17 @@ public class FileSystemStorageStrategy implements StorageStrategy {
         }
     }
 
+    @Override
+    public void deleteFile(String relativePathFolder, String filename) {
+        Path folder = resolve(relativePathFolder);
+        Path target = folder.resolve(filename);
+        try {
+            Files.deleteIfExists(target);
+        } catch (IOException e) {
+            throw new StorageException("Errore durante cancellazione file: " + filename, e);
+        }
+    }
+
     private Path resolve(String relative) {
         if (relative.startsWith("/") || relative.startsWith("\\")) {
             relative = relative.substring(1);

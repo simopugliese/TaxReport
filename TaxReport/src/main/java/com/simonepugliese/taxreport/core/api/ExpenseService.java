@@ -1,6 +1,5 @@
 package com.simonepugliese.taxreport.core.api;
 
-
 import com.simonepugliese.taxreport.core.dto.DocType;
 import com.simonepugliese.taxreport.core.dto.ExpenseStatusDTO;
 import com.simonepugliese.taxreport.core.dto.NewExpenseDTO;
@@ -27,6 +26,12 @@ public interface ExpenseService {
      * @param content Lo stream del file (verrà chiuso dal metodo).
      */
     void uploadDocument(String expenseId, DocType type, InputStream content);
+
+    /**
+     * Rimuove un documento caricato e resetta lo slot.
+     * Ricalcola lo stato della spesa (es. da COMPLIANT a PARTIAL).
+     */
+    void deleteDocument(String expenseId, DocType type);
 
     /**
      * Recupera lo stato aggiornato della spesa.

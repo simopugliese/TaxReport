@@ -26,4 +26,11 @@ public interface StorageStrategy {
      * @throws StorageException se la scrittura fallisce
      */
     void saveFile(String fullPath, String filename, InputStream content);
+
+    /**
+     * Cancella un file fisico.
+     * @param fullPath Il percorso della cartella.
+     * @param filename Il nome del file da cancellare.
+     */
+    void deleteFile(String fullPath, String filename);
 }

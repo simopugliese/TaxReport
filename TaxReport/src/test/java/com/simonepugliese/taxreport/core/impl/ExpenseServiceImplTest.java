@@ -32,17 +32,16 @@ import static org.mockito.Mockito.*;
 class ExpenseServiceImplTest {
 
     @Mock
-    private StorageStrategy storage; // Il finto File System
+    private StorageStrategy storage;
     @Mock
-    private MetadataRepository repository; // Il finto DB
+    private MetadataRepository repository;
     @Mock
-    private RuleEngine ruleEngine; // Il finto Rule Engine
+    private RuleEngine ruleEngine;
 
     private ExpenseServiceImpl service;
 
     @BeforeEach
     void setUp() {
-        // Iniezione delle dipendenze mockate
         service = new ExpenseServiceImpl(storage, repository, ruleEngine);
     }
 
@@ -52,7 +51,6 @@ class ExpenseServiceImplTest {
         // GIVEN
         NewExpenseDTO dto = new NewExpenseDTO(2024, "RSSMRA", "mediche", "2024-10-21", "Dentista");
 
-        // Configuriamo i mock: la cartella non esiste, la creazione va a buon fine
         when(storage.exists(anyString())).thenReturn(false);
         when(storage.createDirectory(anyString())).thenReturn(true);
 
@@ -61,13 +59,10 @@ class ExpenseServiceImplTest {
 
         // THEN
         assertNotNull(id);
-
-        // Verifica che abbia provato a creare la cartella col path giusto (sanitizzato)
-        // Path atteso: /2024/RSSMRA/mediche/20241021_Dentista
         verify(storage).createDirectory(contains("20241021_Dentista"));
-
-        // Verifica che abbia salvato nel DB e chiamato il rule engine
         verify(repository).save(any(ExpenseEntry.class));
+        // Nota: ora applyRules non prende più il parametro entry, ma lo gestisce internamente se necessario,
+        // oppure il metodo è void applyRules(ExpenseEntry entry). Controlla la firma in RuleEngine.
         verify(ruleEngine).applyRules(any(ExpenseEntry.class));
     }
 
@@ -77,17 +72,12 @@ class ExpenseServiceImplTest {
         NewExpenseDTO dto = new NewExpenseDTO(2024, "RSSMRA", "mediche", "2024-10-21", "Dentista");
         String basePath = "/2024/RSSMRA/mediche/20241021_Dentista";
 
-        // GIVEN
-        // La prima volta exists() ritorna true (collisione), la seconda false (suffisso libero)
         when(storage.exists(basePath)).thenReturn(true);
         when(storage.exists(basePath + "_1")).thenReturn(false);
         when(storage.createDirectory(anyString())).thenReturn(true);
 
-        // WHEN
         service.createExpense(dto);
 
-        // THEN
-        // Deve aver creato la cartella col suffisso _1
         verify(storage).createDirectory(eq(basePath + "_1"));
     }
 
@@ -99,13 +89,17 @@ class ExpenseServiceImplTest {
         mockEntry.setPhysicalPath("/path/to/entry");
 
         // Simuliamo che l'entry abbia uno slot vuoto per la FATTURA
+        // Questo slot definisce che il file deve chiamarsi "Fattura.pdf"
         DocumentSlot slot = new DocumentSlot(DocType.INVOICE, true, "Fattura.pdf");
         mockEntry.addSlot(slot);
 
         // GIVEN
         when(repository.findById(entryId)).thenReturn(Optional.of(mockEntry));
-        when(ruleEngine.getStandardFilename(DocType.INVOICE)).thenReturn("Fattura.pdf");
-        // Simuliamo che dopo la validazione, il RuleEngine dica "Tutto OK"
+
+        // *** CORREZIONE QUI ***
+        // Abbiamo rimosso la chiamata a ruleEngine.getStandardFilename()
+        // Il service userà slot.getExpectedFilename() ("Fattura.pdf") automaticamente
+
         when(ruleEngine.validate(mockEntry)).thenReturn(ValidationStatus.COMPLIANT);
 
         InputStream dummyStream = new ByteArrayInputStream("DATA".getBytes());
@@ -114,7 +108,7 @@ class ExpenseServiceImplTest {
         service.uploadDocument(entryId.toString(), DocType.INVOICE, dummyStream);
 
         // THEN
-        // 1. Ha salvato il file fisico?
+        // 1. Ha salvato il file fisico usando il nome previsto dallo slot?
         verify(storage).saveFile(eq("/path/to/entry"), eq("Fattura.pdf"), any());
 
         // 2. Ha aggiornato lo slot?
@@ -130,16 +124,14 @@ class ExpenseServiceImplTest {
     void testUploadDocument_ThrowsIfLocked() {
         UUID entryId = UUID.randomUUID();
         ExpenseEntry lockedEntry = new ExpenseEntry(entryId, "mediche", LocalDate.now(), "Test");
-        lockedEntry.setStatus(ValidationStatus.LOCKED); // Già chiuso!
+        lockedEntry.setStatus(ValidationStatus.LOCKED);
 
         when(repository.findById(entryId)).thenReturn(Optional.of(lockedEntry));
 
-        // WHEN & THEN
         assertThrows(ValidationException.class, () ->
                 service.uploadDocument(entryId.toString(), DocType.INVOICE, InputStream.nullInputStream())
         );
 
-        // Assicurati che non abbia toccato lo storage
         verifyNoInteractions(storage);
     }
 
@@ -149,9 +141,32 @@ class ExpenseServiceImplTest {
         NewExpenseDTO dto = new NewExpenseDTO(2024, "RSSMRA", "mediche", "2024-10-21", "Dentista");
 
         when(storage.exists(anyString())).thenReturn(false);
-        // Simuliamo disco rotto o permessi negati
         when(storage.createDirectory(anyString())).thenThrow(new RuntimeException("Disk Full"));
 
         assertThrows(StorageException.class, () -> service.createExpense(dto));
+    }
+
+    @Test
+    @DisplayName("Delete Document: Successo - Rimuove file e resetta slot")
+    void testDeleteDocument_Success() {
+        UUID entryId = UUID.randomUUID();
+        ExpenseEntry mockEntry = new ExpenseEntry(entryId, "mediche", LocalDate.now(), "Test");
+        mockEntry.setPhysicalPath("/path/to/entry");
+
+        // Slot pieno
+        DocumentSlot slot = new DocumentSlot(DocType.INVOICE, true, "Fattura.pdf");
+        slot.fill("Fattura.pdf", 100);
+        mockEntry.addSlot(slot);
+
+        when(repository.findById(entryId)).thenReturn(Optional.of(mockEntry));
+        when(ruleEngine.validate(mockEntry)).thenReturn(ValidationStatus.PARTIAL); // Torna partial dopo cancellazione
+
+        // WHEN
+        service.deleteDocument(entryId.toString(), DocType.INVOICE);
+
+        // THEN
+        verify(storage).deleteFile("/path/to/entry", "Fattura.pdf");
+        assertFalse(slot.isFilled()); // Slot resettato
+        verify(repository).updateStatus(entryId, ValidationStatus.PARTIAL);
     }
 }

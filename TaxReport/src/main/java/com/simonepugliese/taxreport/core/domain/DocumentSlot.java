@@ -1,6 +1,5 @@
 package com.simonepugliese.taxreport.core.domain;
 
-
 import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.simonepugliese.taxreport.core.dto.DocType;
 import java.io.Serializable;
@@ -13,6 +12,7 @@ public class DocumentSlot implements Serializable {
 
     private FileMetadata currentFile; // Null se vuoto
 
+    // Costruttore vuoto per Jackson
     public DocumentSlot() {
     }
 
@@ -31,7 +31,8 @@ public class DocumentSlot implements Serializable {
         this.currentFile = new FileMetadata(actualFilename, size, LocalDateTime.now());
     }
 
-    void clear() {
+    // Ora è public per permettere la cancellazione dal Service
+    public void clear() {
         this.currentFile = null;
     }
 
@@ -39,8 +40,8 @@ public class DocumentSlot implements Serializable {
     public DocType getType() { return type; }
     public boolean isMandatory() { return mandatory; }
     public String getExpectedFilename() { return expectedFilename; }
-    FileMetadata getCurrentFile() { return currentFile; }
+    public FileMetadata getCurrentFile() { return currentFile; }
 
     // Record interno per i metadati del file
-    record FileMetadata(String filename, long size, LocalDateTime uploadedAt) implements Serializable {}
+    public record FileMetadata(String filename, long size, LocalDateTime uploadedAt) implements Serializable {}
 }

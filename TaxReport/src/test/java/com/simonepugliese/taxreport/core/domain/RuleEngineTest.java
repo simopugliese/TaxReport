@@ -34,7 +34,11 @@ class RuleEngineTest {
     @Test
     void testApplyRules() {
         ruleEngine.loadRules(9999);
-        ExpenseEntry entry = new ExpenseEntry(UUID.randomUUID(), "test_cat", LocalDate.now(), "Desc");
+
+        // FIX: Usiamo una data fissa (9999) invece di LocalDate.now()
+        // Altrimenti cerca rules_2024.json o rules_2025.json e fallisce
+        LocalDate fixedDate = LocalDate.of(9999, 1, 1);
+        ExpenseEntry entry = new ExpenseEntry(UUID.randomUUID(), "test_cat", fixedDate, "Desc");
 
         ruleEngine.applyRules(entry);
 
@@ -44,8 +48,12 @@ class RuleEngineTest {
 
     @Test
     void testValidate_Logic() {
-        ruleEngine.loadRules(9999); // Richiede INVOICE obbligatoria
-        ExpenseEntry entry = new ExpenseEntry(UUID.randomUUID(), "test_cat", LocalDate.now(), "Desc");
+        ruleEngine.loadRules(9999);
+
+        // FIX: Anche qui data fissa allineata alle regole caricate
+        LocalDate fixedDate = LocalDate.of(9999, 1, 1);
+        ExpenseEntry entry = new ExpenseEntry(UUID.randomUUID(), "test_cat", fixedDate, "Desc");
+
         ruleEngine.applyRules(entry);
 
         // Caso 1: EMPTY

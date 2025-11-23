@@ -21,6 +21,7 @@ public class ExpenseEntry implements Serializable {
 
     private final Map<DocType, DocumentSlot> slots = new EnumMap<>(DocType.class);
 
+    // Costruttore vuoto per Jackson
     public ExpenseEntry() {
     }
 
@@ -31,6 +32,8 @@ public class ExpenseEntry implements Serializable {
         this.sanitizedDescription = sanitizedDescription;
     }
 
+    // --- Logica di Dominio ---
+
     public void addSlot(DocumentSlot slot) {
         this.slots.put(slot.getType(), slot);
     }
@@ -39,12 +42,19 @@ public class ExpenseEntry implements Serializable {
         return this.slots.get(type);
     }
 
-    boolean hasSlot(DocType type) {
+    public boolean hasSlot(DocType type) {
         return this.slots.containsKey(type);
     }
 
+    // --- Getters & Setters ---
+
     public UUID getId() { return id; }
     public String getCategoryId() { return categoryId; }
+
+    // ECCO I GETTER MANCANTI
+    public LocalDate getDate() { return date; }
+    public String getSanitizedDescription() { return sanitizedDescription; }
+
     public String getPhysicalPath() { return physicalPath; }
     public void setPhysicalPath(String physicalPath) { this.physicalPath = physicalPath; }
 
