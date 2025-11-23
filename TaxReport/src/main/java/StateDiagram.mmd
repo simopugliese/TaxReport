@@ -1,0 +1,19 @@
+stateDiagram-v2
+    direction LR
+
+    [*] --> EMPTY : Entry Created
+
+    EMPTY --> PARTIAL : First File Uploaded
+
+    state ConsistencyCheck <<choice>>
+
+    PARTIAL --> ConsistencyCheck : File Uploaded/Removed
+    COMPLIANT --> ConsistencyCheck : File Removed
+
+    ConsistencyCheck --> COMPLIANT : "Rules Satisfied (All Mandatory Slots Full)"
+    ConsistencyCheck --> PARTIAL : "Rules Unsatisfied (Missing Mandatory Slot)"
+
+    COMPLIANT --> LOCKED : Year Closed / Exported
+    PARTIAL --> LOCKED : "Year Closed (Warning Logged)"
+
+    LOCKED --> [*]

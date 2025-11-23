@@ -1,0 +1,40 @@
+sequenceDiagram
+    autonumber
+    participant UI as Client (GUI)
+    participant Core as ExpenseCoreService
+    participant Rules as RuleEngine
+    participant FS as FileSystemManager
+    participant DB as MetadataRepository
+
+    Note over UI, Core: Utente carica un file (es. Scontrino)
+
+    UI->>Core: uploadDocument(entryID, DocType.RECEIPT, byte[])
+    activate Core
+
+    Core->>DB: findById(entryID)
+    DB-->>Core: ExpenseEntry (Path: .../2024-10-21_Farmacia/)
+
+    Note right of Core: 1. Core chiede il nome file standard
+    Core->>Rules: getNamingConvention(DocType.RECEIPT)
+    Rules-->>Core: "Scontrino.pdf"
+
+    Note right of Core: 2. Scrittura su Raspberry
+    Core->>FS: saveFile(".../Farmacia/", "Scontrino.pdf", byte[])
+    FS-->>Core: Success
+
+    Note right of Core: 3. Aggiornamento Slot
+    Core->>Core: entry.getSlot(RECEIPT).setFile(metadata)
+    Core->>DB: save(entry)
+
+    Note right of Core: 4. Ricalcolo Stato (Rule Engine)
+    Core->>Rules: validate(entry)
+    alt Missing Mandatory Docs
+        Rules-->>Core: Result(PARTIAL, missing: INVOICE)
+        Core->>DB: updateStatus(PARTIAL)
+    else All Mandatory Present
+        Rules-->>Core: Result(COMPLIANT)
+        Core->>DB: updateStatus(COMPLIANT)
+    end
+
+    Core-->>UI: UploadSuccessDTO (NewStatus)
+    deactivate Core

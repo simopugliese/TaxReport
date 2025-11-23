@@ -1,0 +1,71 @@
+classDiagram
+    direction TB
+
+%% --- SERVICES LAYER ---
+    class ExpenseCoreService {
+        +initYear(int year)
+        +createExpense(NewExpenseDTO dto) UUID
+        +uploadDocument(UUID entryId, DocType type, byte[] content)
+        +getExpenseStatus(UUID entryId) EntryStatusDTO
+        +deleteDocument(UUID entryId, DocType type)
+    }
+
+    class RuleEngine {
+        -Map~String, CategoryRule~ rules
+        +loadRules(int year)
+        +getNamingConvention(DocType type) String
+        +validate(ExpenseEntry entry) ValidationResult
+    }
+
+    class FileSystemManager {
+        +createDirectoryStructure(Path path)
+        +saveFile(Path folder, String filename, byte[] content)
+        +deleteFile(Path folder, String filename)
+        +exists(Path path)
+    }
+
+%% --- DOMAIN LAYER ---
+    class ExpenseEntry {
+        +UUID id
+        +String categoryId
+        +LocalDate date
+        +String description
+        +String physicalPath
+        +ValidationStatus status
+        +Map~DocType, DocumentSlot~ slots
+        +updateStatus(ValidationResult)
+    }
+
+    class DocumentSlot {
+        +DocType type
+        +boolean isMandatory
+        +String expectedFilename
+        +FileMetadata currentFile
+        +isFilled() boolean
+    }
+
+    class FileMetadata {
+        +String filename
+        +long size
+        +LocalDateTime uploadedAt
+    }
+
+%% --- DATA TRANSFER OBJECTS ---
+    class NewExpenseDTO {
+        +int year
+        +String fiscalCode
+        +String categoryId
+        +LocalDate date
+        +String description
+    }
+
+%% --- RELATIONSHIPS ---
+    ExpenseCoreService --> RuleEngine : uses
+    ExpenseCoreService --> FileSystemManager : uses
+    ExpenseCoreService ..> ExpenseEntry : manages
+    ExpenseCoreService ..> NewExpenseDTO : consumes
+
+    ExpenseEntry "1" *-- "*" DocumentSlot : contains
+    DocumentSlot "0..1" --> "1" FileMetadata : has
+
+    RuleEngine ..> ExpenseEntry : validates

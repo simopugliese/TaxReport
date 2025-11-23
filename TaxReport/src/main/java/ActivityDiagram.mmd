@@ -1,0 +1,22 @@
+flowchart TD
+    Start([User Request: Create Expense]) --> Validate{"Input Valid?"}
+
+    Validate -- No --> Error([Return Error DTO])
+    Validate -- Yes --> Sanitize["Sanitize Description<br/>(Regex: a-zA-Z0-9)"]
+
+    Sanitize --> BuildBase["Build Base Path Name:<br/>YYYY-MM-DD_SanitizedDesc"]
+
+    BuildBase --> CheckExists{"Folder Exists<br/>on FS?"}
+
+    CheckExists -- Yes --> AddSuffix["Append suffix _(n+1)"]
+    AddSuffix --> CheckExists
+
+    CheckExists -- No --> CreateDir[FS: Create Directory]
+
+    CreateDir -- Success --> LoadRules["RuleEngine: Get Requirements<br/>for Category"]
+
+    LoadRules --> InitSlots["Init DocumentSlots<br/>(Empty but defined)"]
+
+    InitSlots --> Persist[DB: Save ExpenseEntry Metadata]
+
+    Persist --> Return([Return Entry UUID])
