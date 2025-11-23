@@ -1,33 +1,36 @@
 sequenceDiagram
-participant Client
-participant ExpManager as ExpenseManager
-participant Config as RuleConfig (JSON)
-participant FS as StorageService
-participant DB as Repository
+participant UI as Client (GUI)
+participant Core as ExpenseCoreService
+participant Ent as ExpenseEntry
+participant Slot as DocumentSlot
+participant FS as FileSystem (Raspberry)
 
-    Client->>ExpManager: createExpense(Year, Member, Category, "Dentista")
+    %% Scenario: Utente ha già creato la voce "Dentista" ed è nello stato PARTIAL
+
+    UI->>Core: uploadFile(entryID, DocType.INVOICE, byteStream)
+    activate Core
     
-    activate ExpManager
-    ExpManager->>Config: getRuleFor(Category)
-    Config-->>ExpManager: ComplianceRule (e.g., Needs Receipt+Payment)
+    Core->>Core: retrieveEntry(entryID)
     
-    Note right of ExpManager: 1. Calcolo Path Fisico
+    Note right of Core: Identifica lo slot corretto
+    Core->>Ent: getSlot(DocType.INVOICE)
+    Ent-->>Core: slotRef
     
-    ExpManager->>FS: createFolder("/2024/RSSMRA.../Sanitaria/UUID/")
+    Note right of Core: Costruisce path leggibile
+    Note right of Core: .../Dentista/Fattura.pdf
     
-    alt FS Creation Fails
-        FS-->>ExpManager: Error
-        ExpManager-->>Client: Exception (Rollback, nothing saved)
-    else FS Creation OK
-        FS-->>ExpManager: Success
-        
-        Note right of ExpManager: 2. Persistenza Metadati
-        
-        create participant Entry as new ExpenseEntry
-        ExpManager->>Entry: new(Status=EMPTY)
-        ExpManager->>DB: save(Entry)
-        DB-->>ExpManager: OK
-        
-        ExpManager-->>Client: ExpenseCreatedDTO (Status: EMPTY)
+    Core->>FS: saveFile(entry.folderPath, "Fattura.pdf", byteStream)
+    FS-->>Core: Success
+    
+    Core->>Slot: fill(new FileMetadata(...))
+    
+    Note right of Core: Ricalcolo immediato stato
+    Core->>Ent: updateStatus()
+    alt All Mandatory Slots Full
+        Ent->>Ent: status = COMPLIANT
+    else
+        Ent->>Ent: status = PARTIAL
     end
-    deactivate ExpManager
+    
+    Core-->>UI: UpdatedEntryDTO (Status: COMPLIANT)
+    deactivate Core

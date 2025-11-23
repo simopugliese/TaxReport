@@ -1,74 +1,59 @@
 classDiagram
-%% Domain Entities
-class TaxYear {
-+int year
-+boolean isClosed
+%% Configuration & Rules
+class RuleSet {
++int taxYear
++List~CategoryDefinition~ categories
 }
 
-    class FamilyMember {
-        +String fiscalCode
-        +String fullName
-    }
-
-    class ExpenseCategory {
+    class CategoryDefinition {
         +String id
         +String name
-        +ComplianceRule rule
+        +List~RequirementDef~ requirements
     }
 
+    class RequirementDef {
+        +DocType type
+        +boolean mandatory
+        +String outputFilename %% es. "Fattura.pdf"
+    }
+
+    %% Domain
     class ExpenseEntry {
-        +UUID id
+        +UUID internalId
         +String description
-        +Date date
-        +ExpenseStatus status
-        +List~Document~ documents
-        +validate()
+        +LocalDate date
+        +String folderPath
+        +ValidationStatus status
+        +List~DocumentSlot~ slots
+        +updateStatus()
     }
 
-    class Document {
-        +String fileName
-        +String path
-        +DocumentType type
-    }
-
-    %% Rule Engine (Configuration)
-    class ComplianceRule {
-        +String description
-        +List~Requirement~ requirements
-        +check(List~Document~) boolean
-    }
-
-    class Requirement {
-        +DocumentType requiredType
+    class DocumentSlot {
+        +DocType type
         +boolean isMandatory
+        +String expectedFilename
+        +FileMetadata currentFile %% Null se vuoto
+        +isSatisfied() boolean
+    }
+    
+    class FileMetadata {
+        +String path
+        +long size
+        +LocalDateTime uploadedAt
     }
 
-    %% Interfaces & Services
-    class IExpenseRepository {
-        <<interface>>
-        +save(ExpenseEntry)
-        +findByYear(int)
-    }
-
-    class IStorageService {
-        <<interface>>
-        +createFolder(path)
-        +listFiles(path)
-    }
-
-    class ExpenseManager {
-        +createExpense(DTO)
-        +refreshStatus(ExpenseEntry)
+    %% Manager
+    class ExpenseCoreService {
+        +createEntry(dto)
+        +uploadFile(entryId, docType, fileContent)
+        +deleteFile(entryId, docType)
+        +getZipForAccountant(year)
     }
 
     %% Relationships
-    TaxYear "1" *-- "*" ExpenseEntry
-    FamilyMember "1" o-- "*" ExpenseEntry
-    ExpenseEntry "*" --> "1" ExpenseCategory
-    ExpenseCategory "1" --> "1" ComplianceRule
-    ComplianceRule "1" *-- "*" Requirement
-    ExpenseEntry "1" *-- "*" Document
-    
-    ExpenseManager --> IExpenseRepository
-    ExpenseManager --> IStorageService
-    ExpenseManager ..> ComplianceRule : uses
+    RuleSet "1" *-- "*" CategoryDefinition
+    CategoryDefinition "1" *-- "*" RequirementDef
+    ExpenseEntry "1" *-- "*" DocumentSlot
+    DocumentSlot "0..1" --> "1" FileMetadata
+    ExpenseCoreService ..> RuleSet : reads
+    ExpenseCoreService --> ExpenseEntry : manages

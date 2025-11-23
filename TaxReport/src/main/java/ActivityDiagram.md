@@ -1,25 +1,20 @@
 flowchart TD
-start([Trigger: Open App / File Change]) --> fetch[Fetch Expense Entry]
-fetch --> loadRule[Load ComplianceRule for Category]
-loadRule --> scanFS[Scan Physical Folder]
+start([Create Expense Request]) --> input{Validate Input}
 
-    subgraph ValidationLoop [Check Requirements]
-        direction TB
-        scanFS --> checkReq{Has Next Requirement?}
-        checkReq -- Yes --> getReq[Get Requirement <br/>(e.g., 'Bonifico')]
-        getReq --> findFile{File Exists in Folder?}
-        findFile -- Yes --> markFound[Mark Req Satisfied]
-        findFile -- No --> markMissing[Mark Req MISSING]
-        markFound --> checkReq
-        markMissing --> checkReq
-    end
+    input --> |Valid| cleanDesc[Sanitize Description]
+    Note right of cleanDesc: Rimuovi spazi, accenti, char speciali
     
-    checkReq -- No --> evalStatus{Are all Mandatory <br/>Reqs Satisfied?}
+    cleanDesc --> buildName[Build Folder Name: <br/>YYYY-MM-DD_SanitizedDesc]
     
-    evalStatus -- Yes --> setC[Set Status: COMPLIANT]
-    evalStatus -- No --> setP[Set Status: PARTIAL / WARNING]
+    buildName --> checkDup{Folder Exists?}
     
-    setC --> updateDB[Update DB Metadata]
-    setP --> updateDB
+    checkDup -- Yes --> appendIndex[Append suffix _(1), _(2)]
+    appendIndex --> checkDup
     
-    updateDB --> stop([End])
+    checkDup -- No --> mkDir[FS: Create Directory]
+    
+    mkDir -- Success --> initSlots[Init DocumentSlots from Rules]
+    mkDir -- Fail --> error([Throw IO Exception])
+    
+    initSlots --> persist[DB: Save Metadata]
+    persist --> finish([Return Entry ID])
