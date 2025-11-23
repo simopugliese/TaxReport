@@ -1,40 +1,33 @@
 sequenceDiagram
     autonumber
-    participant UI as Client (GUI)
+    participant UI as Client
     participant Core as ExpenseCoreService
-    participant Rules as RuleEngine
-    participant FS as FileSystemManager
-    participant DB as MetadataRepository
+    participant Repo as MetadataRepository (Interface)
+    participant Store as StorageStrategy (Interface)
+    participant Rule as RuleEngine
 
-    Note over UI, Core: Utente carica un file (es. Scontrino)
+    Note over UI, Core: Upload File (Generic Storage)
 
-    UI->>Core: uploadDocument(entryID, DocType.RECEIPT, byte[])
+    UI->>Core: upload(entryID, INVOICE, inputStream)
     activate Core
 
-    Core->>DB: findById(entryID)
-    DB-->>Core: ExpenseEntry (Path: .../2024-10-21_Farmacia/)
+    Core->>Repo: findById(entryID)
+    Repo-->>Core: Entry (path="/2024/Dentista")
 
-    Note right of Core: 1. Core chiede il nome file standard
-    Core->>Rules: getNamingConvention(DocType.RECEIPT)
-    Rules-->>Core: "Scontrino.pdf"
+    Note right of Core: Logic: Resolve Naming
+    Core->>Rule: getNaming(INVOICE)
+    Rule-->>Core: "Fattura.pdf"
 
-    Note right of Core: 2. Scrittura su Raspberry
-    Core->>FS: saveFile(".../Farmacia/", "Scontrino.pdf", byte[])
-    FS-->>Core: Success
+    Note right of Core: Storage Agnostic Save
+    Core->>Store: saveStream("/2024/Dentista", "Fattura.pdf", input)
+    Store-->>Core: OK
 
-    Note right of Core: 3. Aggiornamento Slot
-    Core->>Core: entry.getSlot(RECEIPT).setFile(metadata)
-    Core->>DB: save(entry)
+    Core->>Repo: updateSlot(entryID, INVOICE, meta)
 
-    Note right of Core: 4. Ricalcolo Stato (Rule Engine)
-    Core->>Rules: validate(entry)
-    alt Missing Mandatory Docs
-        Rules-->>Core: Result(PARTIAL, missing: INVOICE)
-        Core->>DB: updateStatus(PARTIAL)
-    else All Mandatory Present
-        Rules-->>Core: Result(COMPLIANT)
-        Core->>DB: updateStatus(COMPLIANT)
-    end
+    Core->>Rule: validate(entry)
+    Rule-->>Core: NEW_STATUS
 
-    Core-->>UI: UploadSuccessDTO (NewStatus)
+    Core->>Repo: updateStatus(entryID, NEW_STATUS)
+
+    Core-->>UI: Success(NEW_STATUS)
     deactivate Core

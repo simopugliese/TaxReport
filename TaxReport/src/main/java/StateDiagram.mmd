@@ -3,17 +3,17 @@ stateDiagram-v2
 
     [*] --> EMPTY : Entry Created
 
-    EMPTY --> PARTIAL : First File Uploaded
+    EMPTY --> PARTIAL : Document Uploaded
 
-    state ConsistencyCheck <<choice>>
+    state ValidationGate <<choice>>
 
-    PARTIAL --> ConsistencyCheck : File Uploaded/Removed
-    COMPLIANT --> ConsistencyCheck : File Removed
+    PARTIAL --> ValidationGate : Change Detected
+    COMPLIANT --> ValidationGate : Change Detected
 
-    ConsistencyCheck --> COMPLIANT : "Rules Satisfied (All Mandatory Slots Full)"
-    ConsistencyCheck --> PARTIAL : "Rules Unsatisfied (Missing Mandatory Slot)"
+    ValidationGate --> COMPLIANT : All Rules Satisfied
+    ValidationGate --> PARTIAL : Rules Broken
 
-    COMPLIANT --> LOCKED : Year Closed / Exported
-    PARTIAL --> LOCKED : "Year Closed (Warning Logged)"
+    COMPLIANT --> LOCKED : Fiscal Year Closed
+    PARTIAL --> LOCKED : Fiscal Year Closed
 
     LOCKED --> [*]

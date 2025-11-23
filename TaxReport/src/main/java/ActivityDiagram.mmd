@@ -1,22 +1,19 @@
 flowchart TD
-    Start([User Request: Create Expense]) --> Validate{"Input Valid?"}
+    Start((Start)) --> Validate{Input Valid?}
 
-    Validate -- No --> Error([Return Error DTO])
-    Validate -- Yes --> Sanitize["Sanitize Description<br/>(Regex: a-zA-Z0-9)"]
+    Validate -- No --> Error[Throw Exception]
+    Validate -- Yes --> Sanitize["Sanitize Description"]
 
-    Sanitize --> BuildBase["Build Base Path Name:<br/>YYYY-MM-DD_SanitizedDesc"]
+    Sanitize --> PathGen["Build Relative Path<br/>(Year/Member/Cat/Date_Desc)"]
 
-    BuildBase --> CheckExists{"Folder Exists<br/>on FS?"}
+    PathGen --> CheckExists{"Storage.exists(path)?"}
 
-    CheckExists -- Yes --> AddSuffix["Append suffix _(n+1)"]
-    AddSuffix --> CheckExists
+    CheckExists -- Yes --> Suffix["Add Suffix _(n)"]
+    Suffix --> CheckExists
 
-    CheckExists -- No --> CreateDir[FS: Create Directory]
+    CheckExists -- No --> CreateDir["Storage.createDirectory(path)"]
 
-    CreateDir -- Success --> LoadRules["RuleEngine: Get Requirements<br/>for Category"]
+    CreateDir --> InitSlots["RuleEngine: Init Slots"]
+    InitSlots --> SaveMeta["Repository.save(Entry)"]
 
-    LoadRules --> InitSlots["Init DocumentSlots<br/>(Empty but defined)"]
-
-    InitSlots --> Persist[DB: Save ExpenseEntry Metadata]
-
-    Persist --> Return([Return Entry UUID])
+    SaveMeta --> End((Return UUID))

@@ -1,71 +1,68 @@
 classDiagram
     direction TB
 
-%% --- SERVICES LAYER ---
+%% --- CORE BUSINESS LOGIC ---
     class ExpenseCoreService {
-        +initYear(int year)
-        +createExpense(NewExpenseDTO dto) UUID
-        +uploadDocument(UUID entryId, DocType type, byte[] content)
-        +getExpenseStatus(UUID entryId) EntryStatusDTO
-        +deleteDocument(UUID entryId, DocType type)
+        -StorageStrategy storage
+        -MetadataRepository repository
+        -RuleEngine rules
+        +createExpense(NewExpenseDTO) UUID
+        +uploadDocument(UUID, DocType, InputStream)
     }
 
-    class RuleEngine {
-        -Map~String, CategoryRule~ rules
-        +loadRules(int year)
-        +getNamingConvention(DocType type) String
-        +validate(ExpenseEntry entry) ValidationResult
+%% --- ABSTRACTIONS (INTERFACES) ---
+    class StorageStrategy {
+        <<Interface>>
+        +createDirectory(String path)
+        +saveStream(String path, String name, InputStream stream)
+        +exists(String path)
     }
 
-    class FileSystemManager {
-        +createDirectoryStructure(Path path)
-        +saveFile(Path folder, String filename, byte[] content)
-        +deleteFile(Path folder, String filename)
-        +exists(Path path)
+    class MetadataRepository {
+        <<Interface>>
+        +save(ExpenseEntry)
+        +findById(UUID) ExpenseEntry
+        +updateStatus(UUID, ValidationStatus)
     }
 
-%% --- DOMAIN LAYER ---
+%% --- CONCRETE IMPLEMENTATIONS (PLUGINS) ---
+    class LocalStorageStrategy {
+        +createDirectory(path)
+        +saveStream(path, name, stream)
+    }
+
+    class RemoteStorageStrategy {
+        -String sshHost
+        +createDirectory(path)
+        +saveStream(path, name, stream)
+    }
+
+    class SqlMetadataRepository {
+        -Connection dbConnection
+        +save(entry)
+    }
+
+    class JsonMetadataRepository {
+        -File jsonDbFile
+        +save(entry)
+    }
+
+%% --- DOMAIN ENTITIES ---
     class ExpenseEntry {
         +UUID id
-        +String categoryId
-        +LocalDate date
-        +String description
-        +String physicalPath
+        +String relativePath
         +ValidationStatus status
         +Map~DocType, DocumentSlot~ slots
-        +updateStatus(ValidationResult)
-    }
-
-    class DocumentSlot {
-        +DocType type
-        +boolean isMandatory
-        +String expectedFilename
-        +FileMetadata currentFile
-        +isFilled() boolean
-    }
-
-    class FileMetadata {
-        +String filename
-        +long size
-        +LocalDateTime uploadedAt
-    }
-
-%% --- DATA TRANSFER OBJECTS ---
-    class NewExpenseDTO {
-        +int year
-        +String fiscalCode
-        +String categoryId
-        +LocalDate date
-        +String description
     }
 
 %% --- RELATIONSHIPS ---
-    ExpenseCoreService --> RuleEngine : uses
-    ExpenseCoreService --> FileSystemManager : uses
+    ExpenseCoreService --> StorageStrategy : uses
+    ExpenseCoreService --> MetadataRepository : uses
+
+    LocalStorageStrategy ..|> StorageStrategy : implements
+    RemoteStorageStrategy ..|> StorageStrategy : implements
+
+    SqlMetadataRepository ..|> MetadataRepository : implements
+    JsonMetadataRepository ..|> MetadataRepository : implements
+
     ExpenseCoreService ..> ExpenseEntry : manages
-    ExpenseCoreService ..> NewExpenseDTO : consumes
-
-    ExpenseEntry "1" *-- "*" DocumentSlot : contains
-    DocumentSlot "0..1" --> "1" FileMetadata : has
-
-    RuleEngine ..> ExpenseEntry : validates
