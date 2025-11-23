@@ -10,10 +10,10 @@ stateDiagram-v2
     PARTIAL --> ValidationGate : Change Detected
     COMPLIANT --> ValidationGate : Change Detected
 
-    ValidationGate --> COMPLIANT : All Rules Satisfied
+    ValidationGate --> COMPLIANT : Rules Satisfied
     ValidationGate --> PARTIAL : Rules Broken
 
-    COMPLIANT --> LOCKED : Fiscal Year Closed
-    PARTIAL --> LOCKED : Fiscal Year Closed
+    COMPLIANT --> LOCKED : Year Closed
+    PARTIAL --> LOCKED : Year Closed
 
     LOCKED --> [*]

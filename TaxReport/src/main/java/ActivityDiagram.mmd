@@ -2,13 +2,13 @@ flowchart TD
     Start((Start)) --> Validate{Input Valid?}
 
     Validate -- No --> Error[Throw Exception]
-    Validate -- Yes --> Sanitize["Sanitize Description"]
+    Validate -- Yes --> Sanitize["Sanitize Description<br/>(Keep only safe chars)"]
 
-    Sanitize --> PathGen["Build Relative Path<br/>(Year/Member/Cat/Date_Desc)"]
+    Sanitize --> PathGen["Build Folder Name:<br/>YYYYMMDD_SanitizedDesc"]
 
     PathGen --> CheckExists{"Storage.exists(path)?"}
 
-    CheckExists -- Yes --> Suffix["Add Suffix _(n)"]
+    CheckExists -- Yes --> Suffix["Append suffix to NAME<br/>(e.g. _Dentista_1)"]
     Suffix --> CheckExists
 
     CheckExists -- No --> CreateDir["Storage.createDirectory(path)"]

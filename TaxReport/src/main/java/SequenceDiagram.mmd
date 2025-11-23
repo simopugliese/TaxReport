@@ -2,28 +2,29 @@ sequenceDiagram
     autonumber
     participant UI as Client
     participant Core as ExpenseCoreService
-    participant Repo as MetadataRepository (Interface)
-    participant Store as StorageStrategy (Interface)
+    participant Repo as MetadataRepository
+    participant Store as StorageStrategy
     participant Rule as RuleEngine
 
-    Note over UI, Core: Upload File (Generic Storage)
+    Note over UI, Core: Upload File su voce esistente
 
     UI->>Core: upload(entryID, INVOICE, inputStream)
     activate Core
 
     Core->>Repo: findById(entryID)
-    Repo-->>Core: Entry (path="/2024/Dentista")
+    Repo-->>Core: Entry (Path: ".../20241212_Dentista/")
 
-    Note right of Core: Logic: Resolve Naming
-    Core->>Rule: getNaming(INVOICE)
+    Note right of Core: 1. Naming (Rule Engine)
+    Core->>Rule: getNamingConvention(INVOICE)
     Rule-->>Core: "Fattura.pdf"
 
-    Note right of Core: Storage Agnostic Save
-    Core->>Store: saveStream("/2024/Dentista", "Fattura.pdf", input)
+    Note right of Core: 2. Salvataggio Astratto (Polimorfismo)
+    Core->>Store: saveStream(".../20241212_Dentista/Fattura.pdf", input)
     Store-->>Core: OK
 
-    Core->>Repo: updateSlot(entryID, INVOICE, meta)
+    Core->>Repo: updateSlot(entryID, INVOICE, metadata)
 
+    Note right of Core: 3. Validazione
     Core->>Rule: validate(entry)
     Rule-->>Core: NEW_STATUS
 

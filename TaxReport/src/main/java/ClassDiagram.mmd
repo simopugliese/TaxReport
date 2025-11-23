@@ -1,7 +1,7 @@
 classDiagram
     direction TB
 
-%% --- CORE BUSINESS LOGIC ---
+%% --- CORE SERVICES ---
     class ExpenseCoreService {
         -StorageStrategy storage
         -MetadataRepository repository
@@ -10,14 +10,27 @@ classDiagram
         +uploadDocument(UUID, DocType, InputStream)
     }
 
-%% --- ABSTRACTIONS (INTERFACES) ---
+%% --- STRATEGY PATTERN (STORAGE) ---
     class StorageStrategy {
         <<Interface>>
-        +createDirectory(String path)
-        +saveStream(String path, String name, InputStream stream)
+        +createDirectory(String relativePath)
+        +saveStream(String fullPath, InputStream stream)
         +exists(String path)
     }
 
+    class LocalStorageStrategy {
+        +createDirectory(path)
+        +saveStream(path, stream)
+    }
+
+    class RemoteStorageStrategy {
+        -String sshHost
+        -String sshUser
+        +createDirectory(path)
+        +saveStream(path, stream)
+    }
+
+%% --- REPOSITORY PATTERN (METADATA) ---
     class MetadataRepository {
         <<Interface>>
         +save(ExpenseEntry)
@@ -25,44 +38,31 @@ classDiagram
         +updateStatus(UUID, ValidationStatus)
     }
 
-%% --- CONCRETE IMPLEMENTATIONS (PLUGINS) ---
-    class LocalStorageStrategy {
-        +createDirectory(path)
-        +saveStream(path, name, stream)
-    }
-
-    class RemoteStorageStrategy {
-        -String sshHost
-        +createDirectory(path)
-        +saveStream(path, name, stream)
+    class JsonMetadataRepository {
+        -File jsonDbFile
     }
 
     class SqlMetadataRepository {
         -Connection dbConnection
-        +save(entry)
     }
 
-    class JsonMetadataRepository {
-        -File jsonDbFile
-        +save(entry)
-    }
-
-%% --- DOMAIN ENTITIES ---
+%% --- DOMAIN ---
     class ExpenseEntry {
         +UUID id
-        +String relativePath
+        +String fullPath
+        +String description
         +ValidationStatus status
         +Map~DocType, DocumentSlot~ slots
     }
 
 %% --- RELATIONSHIPS ---
-    ExpenseCoreService --> StorageStrategy : uses
-    ExpenseCoreService --> MetadataRepository : uses
+    ExpenseCoreService --> StorageStrategy
+    ExpenseCoreService --> MetadataRepository
 
-    LocalStorageStrategy ..|> StorageStrategy : implements
-    RemoteStorageStrategy ..|> StorageStrategy : implements
+    LocalStorageStrategy ..|> StorageStrategy
+    RemoteStorageStrategy ..|> StorageStrategy
 
-    SqlMetadataRepository ..|> MetadataRepository : implements
-    JsonMetadataRepository ..|> MetadataRepository : implements
+    JsonMetadataRepository ..|> MetadataRepository
+    SqlMetadataRepository ..|> MetadataRepository
 
-    ExpenseCoreService ..> ExpenseEntry : manages
+    ExpenseCoreService ..> ExpenseEntry
