@@ -10,16 +10,19 @@ import java.util.Map;
 import java.util.UUID;
 
 public class ExpenseEntry implements Serializable {
-    private final UUID id;
-    private final String categoryId;
-    private final LocalDate date;
-    private final String sanitizedDescription;
+    private UUID id;
+    private String categoryId;
+    private LocalDate date;
+    private String sanitizedDescription;
 
     private String physicalPath;
 
     private ValidationStatus status = ValidationStatus.EMPTY;
 
     private final Map<DocType, DocumentSlot> slots = new EnumMap<>(DocType.class);
+
+    public ExpenseEntry() {
+    }
 
     public ExpenseEntry(UUID id, String categoryId, LocalDate date, String sanitizedDescription) {
         this.id = id;
@@ -28,7 +31,7 @@ public class ExpenseEntry implements Serializable {
         this.sanitizedDescription = sanitizedDescription;
     }
 
-    void addSlot(DocumentSlot slot) {
+    public void addSlot(DocumentSlot slot) {
         this.slots.put(slot.getType(), slot);
     }
 

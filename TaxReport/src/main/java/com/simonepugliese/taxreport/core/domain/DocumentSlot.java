@@ -1,23 +1,28 @@
 package com.simonepugliese.taxreport.core.domain;
 
 
+import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.simonepugliese.taxreport.core.dto.DocType;
 import java.io.Serializable;
 import java.time.LocalDateTime;
 
 public class DocumentSlot implements Serializable {
-    private final DocType type;
-    private final boolean mandatory;
-    private final String expectedFilename; // Es. "Fattura.pdf"
+    private DocType type;
+    private boolean mandatory;
+    private String expectedFilename; // Es. "Fattura.pdf"
 
     private FileMetadata currentFile; // Null se vuoto
 
-    DocumentSlot(DocType type, boolean mandatory, String expectedFilename) {
+    public DocumentSlot() {
+    }
+
+    public DocumentSlot(DocType type, boolean mandatory, String expectedFilename) {
         this.type = type;
         this.mandatory = mandatory;
         this.expectedFilename = expectedFilename;
     }
 
+    @JsonIgnore
     public boolean isFilled() {
         return currentFile != null;
     }
