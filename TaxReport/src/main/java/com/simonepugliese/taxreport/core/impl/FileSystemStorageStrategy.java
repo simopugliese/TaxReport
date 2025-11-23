@@ -44,7 +44,6 @@ public class FileSystemStorageStrategy implements StorageStrategy {
     }
 
     private Path resolve(String relative) {
-        // Toglie lo slash iniziale se c'è, per evitare problemi con Path.resolve
         if (relative.startsWith("/") || relative.startsWith("\\")) {
             relative = relative.substring(1);
         }

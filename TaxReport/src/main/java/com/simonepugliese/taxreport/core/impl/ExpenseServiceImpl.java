@@ -42,7 +42,6 @@ class ExpenseServiceImpl implements ExpenseService {
     public String createExpense(NewExpenseDTO dto) {
         logger.info("Creazione spesa: Cat={}, Data={}", dto.categoryId(), dto.dateRaw());
 
-        // 1. Validazione base
         if (dto.description() == null || dto.description().isBlank()) {
             throw new ValidationException("La descrizione è obbligatoria.");
         }
@@ -53,16 +52,12 @@ class ExpenseServiceImpl implements ExpenseService {
             throw new ValidationException("Formato data non valido (richiesto YYYY-MM-DD).");
         }
 
-        // 2. Calcolo Path Fisico (Naming Convention)
-        // Rimuove tutto tranne lettere e numeri per sicurezza filesystem
         String safeDesc = dto.description().replaceAll("[^a-zA-Z0-9]", "_");
-        String dateStr = dto.dateRaw().replace("-", ""); // 20241021
+        String dateStr = dto.dateRaw().replace("-", "");
 
-        // Base: /2024/CODICE/CATEGORIA/YYYYMMDD_Descrizione
         String relativeBasePath = String.format("/%d/%s/%s/%s_%s",
                 dto.year(), dto.fiscalCode(), dto.categoryId(), dateStr, safeDesc);
 
-        // 3. Gestione Collisioni (Loop per trovare suffisso libero)
         String finalPath = relativeBasePath;
         int counter = 1;
         while (storage.exists(finalPath)) {
@@ -70,25 +65,20 @@ class ExpenseServiceImpl implements ExpenseService {
             finalPath = relativeBasePath + "_" + counter++;
         }
 
-        // 4. Creazione Cartella Fisica
         try {
             boolean created = storage.createDirectory(finalPath);
             if (!created) {
-                // Caso limite: concorrenza estrema
                 throw new StorageException("Impossibile creare cartella (già esistente?): " + finalPath, null);
             }
         } catch (Exception e) {
             throw new StorageException("Errore I/O creazione cartella: " + finalPath, e);
         }
 
-        // 5. Creazione Entità Logica
         ExpenseEntry entry = new ExpenseEntry(UUID.randomUUID(), dto.categoryId(), date, dto.description());
         entry.setPhysicalPath(finalPath);
 
-        // 6. Applicazione Regole (creazione slot vuoti)
         ruleEngine.applyRules(entry);
 
-        // 7. Persistenza
         repository.save(entry);
 
         logger.info("Spesa creata con ID: {}", entry.getId());
@@ -107,29 +97,20 @@ class ExpenseServiceImpl implements ExpenseService {
             throw new ValidationException("Impossibile modificare una spesa in anno chiuso (LOCKED).");
         }
 
-        // 1. Recupero nome standard (es. "Fattura.pdf")
-        // Nota: Qui potremmo chiedere al ruleEngine il nome specifico se configurato
         String standardName = ruleEngine.getStandardFilename(type);
-
-        // 2. Salvataggio fisico
         storage.saveFile(entry.getPhysicalPath(), standardName, content);
 
-        // 3. Aggiornamento Slot
         var slot = entry.getSlot(type);
         if (slot == null) {
-            // Se l'utente carica un documento non previsto dalle regole per questa categoria
-            // Possiamo decidere se bloccarlo o aggiungerlo dinamicamente. Per ora blocchiamo.
             throw new ValidationException("Documento tipo " + type + " non previsto per questa categoria.");
         }
-        // Nota: size 0 per ora, se lo stream non lo supporta. In futuro StorageStrategy può ritornare il size.
         slot.fill(standardName, 0);
 
-        // 4. Ricalcolo Stato e Salvataggio
         ValidationStatus newStatus = ruleEngine.validate(entry);
         entry.setStatus(newStatus);
 
         repository.updateStatus(uid, newStatus);
-        repository.save(entry); // Salvataggio completo per aggiornare lo slot
+        repository.save(entry);
 
         logger.info("Upload completato. Nuovo stato: {}", newStatus);
     }
@@ -140,7 +121,6 @@ class ExpenseServiceImpl implements ExpenseService {
         ExpenseEntry entry = repository.findById(uid)
                 .orElseThrow(() -> new ValidationException("Spesa non trovata."));
 
-        // Mapping manuale verso DTO
         var slotsStatus = entry.getSlots().values().stream()
                 .collect(Collectors.toMap(DocumentSlot::getType, DocumentSlot::isFilled));
 

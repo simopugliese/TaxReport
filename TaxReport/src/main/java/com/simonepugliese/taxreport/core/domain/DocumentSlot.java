@@ -5,7 +5,6 @@ import com.simonepugliese.taxreport.core.dto.DocType;
 import java.io.Serializable;
 import java.time.LocalDateTime;
 
-// Visibilità: package-private
 public class DocumentSlot implements Serializable {
     private final DocType type;
     private final boolean mandatory;

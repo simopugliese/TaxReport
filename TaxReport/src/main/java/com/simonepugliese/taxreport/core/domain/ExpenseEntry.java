@@ -9,19 +9,16 @@ import java.util.EnumMap;
 import java.util.Map;
 import java.util.UUID;
 
-// Visibilità: package-private
 public class ExpenseEntry implements Serializable {
     private final UUID id;
     private final String categoryId;
     private final LocalDate date;
     private final String sanitizedDescription;
 
-    // Path relativo alla root dello storage (es. "/2024/RSS.../Dentista/")
     private String physicalPath;
 
     private ValidationStatus status = ValidationStatus.EMPTY;
 
-    // EnumMap è molto più efficiente e memory-safe per chiavi Enum
     private final Map<DocType, DocumentSlot> slots = new EnumMap<>(DocType.class);
 
     public ExpenseEntry(UUID id, String categoryId, LocalDate date, String sanitizedDescription) {
@@ -30,8 +27,6 @@ public class ExpenseEntry implements Serializable {
         this.date = date;
         this.sanitizedDescription = sanitizedDescription;
     }
-
-    // --- Logica di Dominio ---
 
     void addSlot(DocumentSlot slot) {
         this.slots.put(slot.getType(), slot);
@@ -45,8 +40,6 @@ public class ExpenseEntry implements Serializable {
         return this.slots.containsKey(type);
     }
 
-    // --- Getters & Setters (controllati) ---
-
     public UUID getId() { return id; }
     public String getCategoryId() { return categoryId; }
     public String getPhysicalPath() { return physicalPath; }
@@ -55,7 +48,6 @@ public class ExpenseEntry implements Serializable {
     public ValidationStatus getStatus() { return status; }
     public void setStatus(ValidationStatus status) { this.status = status; }
 
-    // Ritorna una copia non modificabile per evitare che qualcuno manometta gli slot da fuori
     public Map<DocType, DocumentSlot> getSlots() {
         return Map.copyOf(slots);
     }

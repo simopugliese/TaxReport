@@ -50,7 +50,6 @@ public class RuleEngine {
         }
 
         for (Requirement req : rule.requirements()) {
-            // Crea lo slot vuoto aspettando quel file specifico
             entry.addSlot(new DocumentSlot(req.type(), req.mandatory(), req.filenameConvention()));
         }
     }
@@ -61,7 +60,6 @@ public class RuleEngine {
      * Per ora usiamo una convenzione statica o definita nel primo requisito trovato.
      */
     public String getStandardFilename(DocType type) {
-        // Semplificazione: switch case basato su convenzioni globali se non specifiche per categoria
         return switch (type) {
             case INVOICE -> "Fattura.pdf";
             case RECEIPT -> "Scontrino.pdf";
@@ -105,9 +103,6 @@ public class RuleEngine {
         }
     }
 
-    // --- Classi per Mapping JSON (interne al package) ---
-
-    // Es JSON: { "id": "mediche", "requirements": [ { "type": "INVOICE", "mandatory": true } ] }
     record CategoryRule(String id, String description, List<Requirement> requirements) {}
 
     record Requirement(DocType type, boolean mandatory, String filenameConvention) {}
