@@ -35,8 +35,7 @@ class RuleEngineTest {
     void testApplyRules() {
         ruleEngine.loadRules(9999);
 
-        // FIX: Usiamo una data fissa (9999) invece di LocalDate.now()
-        // Altrimenti cerca rules_2024.json o rules_2025.json e fallisce
+        // FIX APPLICATO: Usiamo una data fissa (9999) allineata alle regole
         LocalDate fixedDate = LocalDate.of(9999, 1, 1);
         ExpenseEntry entry = new ExpenseEntry(UUID.randomUUID(), "test_cat", fixedDate, "Desc");
 
@@ -50,7 +49,7 @@ class RuleEngineTest {
     void testValidate_Logic() {
         ruleEngine.loadRules(9999);
 
-        // FIX: Anche qui data fissa allineata alle regole caricate
+        // FIX APPLICATO: Anche qui data fissa (9999)
         LocalDate fixedDate = LocalDate.of(9999, 1, 1);
         ExpenseEntry entry = new ExpenseEntry(UUID.randomUUID(), "test_cat", fixedDate, "Desc");
 
