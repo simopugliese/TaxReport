@@ -1,9 +1,0 @@
-[
-  {
-    "id": "test_cat",
-    "description": "Categoria di Test",
-    "requirements": [
-      { "type": "INVOICE", "mandatory": true, "filenameConvention": "Fattura.pdf" }
-    ]
-  }
-]
