@@ -12,10 +12,10 @@ import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
-public class SQLMetadata implements MetadataInterface {
+public class SQLiteMetadata implements MetadataInterface {
     private final String connectionString;
 
-    public SQLMetadata(String rootPath) {
+    public SQLiteMetadata(String rootPath) {
         if (rootPath == null || rootPath.isBlank()) {
             throw new ConfigurationException("Il path di root per il database non può essere vuoto.");
         }
