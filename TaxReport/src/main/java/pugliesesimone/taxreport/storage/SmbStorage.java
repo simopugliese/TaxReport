@@ -66,8 +66,14 @@ public class SmbStorage implements StorageInterface {
                     fullPath, accessMask, null, shareAccess,
                     SMB2CreateDisposition.FILE_OVERWRITE_IF, null)) {
 
-                byte[] buffer = inputStream.readAllBytes();
-                file.write(buffer, 0);
+                byte[] buffer = new byte[8192];
+                int bytesRead;
+                long fileOffset = 0;
+
+                while ((bytesRead = inputStream.read(buffer)) != -1) {
+                    file.write(buffer, fileOffset, 0, bytesRead);
+                    fileOffset += bytesRead;
+                }
                 return true;
             }
         });
@@ -75,26 +81,66 @@ public class SmbStorage implements StorageInterface {
 
     @Override
     public InputStream loadFile(String relativePath, String filename) {
-        return execute(share -> {
+        try {
+            Connection connection = client.connect(hostname);
+            AuthenticationContext ac = new AuthenticationContext(auth.getUsername(), auth.getPassword(), auth.getDomain());
+            Session session = connection.authenticate(ac);
+            DiskShare share = (DiskShare) session.connectShare(shareName);
+
             String fullPath = normalizePath(relativePath + "/" + filename);
             if (!share.fileExists(fullPath)) {
+                share.close(); session.close(); connection.close();
                 throw new StorageException("File non trovato su SMB: " + fullPath, null);
             }
 
             Set<AccessMask> accessMask = new HashSet<>(EnumSet.of(AccessMask.GENERIC_READ));
             Set<SMB2ShareAccess> shareAccess = new HashSet<>(EnumSet.of(SMB2ShareAccess.FILE_SHARE_READ));
 
-            try (File file = share.openFile(
-                    fullPath, accessMask, null, shareAccess,
-                    SMB2CreateDisposition.FILE_OPEN, null)) {
+            File file = share.openFile(fullPath, accessMask, null, shareAccess, SMB2CreateDisposition.FILE_OPEN, null);
 
-                ByteArrayOutputStream baos = new ByteArrayOutputStream();
-                file.read(baos);
-                return new ByteArrayInputStream(baos.toByteArray());
-            } catch (IOException e) {
-                throw new StorageException("Errore lettura stream SMB", e);
+            // Restituiamo uno stream che sa come leggere il file SMB a pezzi
+            return new SmbFileInputStream(connection, session, share, file);
+
+        } catch (Exception e) {
+            throw new StorageException("Errore apertura stream SMB", e);
+        }
+    }
+
+    private static class SmbFileInputStream extends InputStream {
+        private final Connection connection;
+        private final Session session;
+        private final DiskShare share;
+        private final File file;
+        private long offset = 0;
+
+        public SmbFileInputStream(Connection c, Session s, DiskShare sh, File f) {
+            this.connection = c; this.session = s; this.share = sh; this.file = f;
+        }
+
+        @Override
+        public int read() throws IOException {
+            byte[] b = new byte[1];
+            int read = read(b, 0, 1);
+            return read == -1 ? -1 : b[0] & 0xFF;
+        }
+
+        @Override
+        public int read(byte[] b, int off, int len) throws IOException {
+            int actualRead = file.read(b, offset, off, len);
+            if (actualRead > 0) {
+                offset += actualRead;
+                return actualRead;
             }
-        });
+            return -1;
+        }
+
+        @Override
+        public void close() throws IOException {
+            try { file.close(); } catch(Exception ignored) {}
+            try { share.close(); } catch(Exception ignored) {}
+            try { session.close(); } catch(Exception ignored) {}
+            try { connection.close(); } catch(Exception ignored) {}
+        }
     }
 
     @Override

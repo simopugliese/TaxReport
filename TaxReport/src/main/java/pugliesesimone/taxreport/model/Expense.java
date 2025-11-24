@@ -95,12 +95,12 @@ public class Expense {
                 .collect(Collectors.toList());
     }
 
-    public boolean removeDocumentById(UUID id){
-        Document toBeRemoved = this.documents
-                .stream()
-                .filter(document -> document.getId().equals(id))
-                .toList().getFirst();
+    public boolean removeDocumentById(UUID id) {
 
-        return this.documents.remove(toBeRemoved);
+        return this.documents.stream()
+                .filter(document -> document.getId().equals(id))
+                .findFirst()
+                .map(this.documents::remove)
+                .orElse(false);
     }
 }

@@ -45,7 +45,9 @@ public class TaxReportService {
 
         try {
             if (!storage.existsFolder(folderPath)) {
-                if (!storage.createFolder(folderPath)) {
+                boolean created = storage.createFolder(folderPath);
+
+                if (!created && !storage.existsFolder(folderPath)) {
                     throw new ServiceException("Impossibile creare cartella: " + folderPath);
                 }
             }
@@ -70,7 +72,13 @@ public class TaxReportService {
 
         } catch (Exception e) {
             logger.error("Errore salvataggio spesa {}. Eseguo rollback.", expense.getId(), e);
+
             rollbackFiles(savedDocuments);
+
+            if (expense.getDocuments() != null) {
+                expense.getDocuments().removeAll(savedDocuments);
+            }
+
             throw new ServiceException("Salvataggio fallito: " + e.getMessage(), e);
         }
     }
