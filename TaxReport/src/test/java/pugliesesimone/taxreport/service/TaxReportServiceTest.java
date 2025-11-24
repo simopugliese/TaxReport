@@ -69,7 +69,7 @@ class TaxReportServiceTest {
     @Test
     void registerExpense_ShouldRollbackFiles_WhenDbFails() {
         // Arrange: Simuliamo il DB che fallisce (es. Persona non trovata)
-        Attachment att = new Attachment(DocumentType.SCONTRINO, "scontrino.jpg", new ByteArrayInputStream(new byte[0]));
+        Attachment att = new Attachment(DocumentType.RICEVUTA_PAGAMENTO, "scontrino.jpg", new ByteArrayInputStream(new byte[0]));
 
         when(storage.createFolder(anyString())).thenReturn(true);
         when(storage.saveFile(anyString(), anyString(), any())).thenReturn(true);

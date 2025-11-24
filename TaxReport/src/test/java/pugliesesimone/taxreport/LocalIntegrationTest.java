@@ -1,143 +1,138 @@
 package pugliesesimone.taxreport;
 
 import pugliesesimone.taxreport.model.*;
+import pugliesesimone.taxreport.rules.ComplianceResult;
+import pugliesesimone.taxreport.rules.ComplianceService;
+import pugliesesimone.taxreport.rules.RuleEngine;
 import pugliesesimone.taxreport.service.TaxReportService;
 import pugliesesimone.taxreport.storage.FileSystemStorage;
 import pugliesesimone.taxreport.metadata.SQLiteMetadata;
 
 import java.io.ByteArrayInputStream;
 import java.io.File;
+import java.io.FileWriter;
 import java.nio.charset.StandardCharsets;
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.PreparedStatement;
+import java.util.Collections;
 import java.util.List;
 
 public class LocalIntegrationTest {
 
-    // Cartella di test nel progetto corrente (verrà creata se non esiste)
     private static final String TEST_ROOT = "./test_env";
 
     public static void main(String[] args) {
-        System.out.println("=== AVVIO LOCAL INTEGRATION TEST (OFFLINE MODE) ===");
-
-        // 1. Pulizia Ambiente (Opzionale: cancella la cartella test_env per partire pulito)
-        // cleanDirectory(new File(TEST_ROOT));
+        System.out.println("=== AVVIO LOCAL INTEGRATION TEST (FULL CYCLE) ===");
 
         try {
-            // Assicuriamoci che la root esista
+            // 1. Setup Ambiente e Storage
             new File(TEST_ROOT).mkdirs();
-
-            // 2. Setup Componenti Locali
-            System.out.println("-> Init Storage Locale: " + TEST_ROOT);
             FileSystemStorage storage = new FileSystemStorage(TEST_ROOT);
-
-            System.out.println("-> Init SQLite Locale...");
             SQLiteMetadata metadata = new SQLiteMetadata(TEST_ROOT);
 
-            // 3. SETUP DATI ESSENZIALI (BOOTSTRAP)
-            // Siccome siamo in Strict Mode (FK ON), dobbiamo creare la persona nel DB
-            // altrimenti il service fallirà al primo salvataggio.
+            // 2. Creazione file regole JSON (Simulazione Configurazione)
+            createDummyRulesFile();
+
+            // 3. Bootstrap Anagrafica
             Person me = new Person("Simone Engineer", "PGLSMN90A01H501X");
             bootstrapPerson(metadata, me);
 
-            // 4. Init Service
+            // 4. Init Servizi
             TaxReportService service = new TaxReportService(storage, metadata);
+            RuleEngine ruleEngine = new RuleEngine(storage); // [NUOVO]
+            ComplianceService complianceService = new ComplianceService(metadata, ruleEngine); // [NUOVO]
 
-            // 5. TEST 1: FLUSSO STANDARD (3 Spese con allegati)
-            System.out.println("\n--- TEST 1: Inserimento Standard ---");
-            for (int i = 1; i <= 3; i++) {
-                Expense exp = new Expense("2024", me, ExpenseType.PAGAMENTO_UNIVERSITARIO, "Rata " + i, "15/0" + i + "/2024");
+            // --- SCENARIO A: Spesa COMPLETA ---
+            System.out.println("\n--- SCENARIO A: Inserimento Spesa COMPLETA ---");
+            Expense expOk = new Expense("2024", me, ExpenseType.PAGAMENTO_UNIVERSITARIO, "Rata Completa", "15/01/2024");
+            // Il JSON vuole FATTURA + RICEVUTA_PAGAMENTO per UNIVERSITARIO
+            service.registerExpense(expOk, List.of(
+                    new Attachment(DocumentType.FATTURA, "fattura.pdf", stream("DATA")),
+                    new Attachment(DocumentType.RICEVUTA_PAGAMENTO, "bonifico.pdf", stream("DATA"))
+            ));
+            System.out.println(">> Spesa OK registrata. Stato attuale: " + expOk.getExpenseState()); // Sarà INITIAL
 
-                String content = "Ricevuta Universitaria numero " + i;
-                Attachment att = new Attachment(
-                        DocumentType.FATTURA,
-                        "bollettino_" + i + ".pdf",
-                        new ByteArrayInputStream(content.getBytes(StandardCharsets.UTF_8))
-                );
+            // --- SCENARIO B: Spesa INCOMPLETA ---
+            System.out.println("\n--- SCENARIO B: Inserimento Spesa INCOMPLETA ---");
+            Expense expKo = new Expense("2024", me, ExpenseType.PAGAMENTO_UNIVERSITARIO, "Rata Mancante", "20/01/2024");
+            // Carico SOLO la Fattura, manca la Ricevuta
+            service.registerExpense(expKo, List.of(
+                    new Attachment(DocumentType.FATTURA, "fattura_only.pdf", stream("DATA"))
+            ));
+            System.out.println(">> Spesa KO registrata. Stato attuale: " + expKo.getExpenseState());
 
-                service.registerExpense(exp, List.of(att));
-                System.out.println(">> Spesa " + i + " registrata. ID: " + exp.getId());
+            // --- SCENARIO C: Esecuzione REPORT (Compliance) ---
+            System.out.println("\n--- SCENARIO C: Esecuzione REPORT & VALIDAZIONE ---");
 
-                // Verifica fisica immediata
-                verifyFileExists(exp);
+            // Ricarichiamo le spese dal DB per essere sicuri di lavorare sui dati persistiti
+            // (Nota: In un app reale faresti metadata.findAll(), qui usiamo gli oggetti che abbiamo)
+            List<Expense> reportList = List.of(expOk, expKo);
+
+            complianceService.validateAndUpdateStatus(reportList);
+
+            // Verifica Risultati
+            System.out.println(">> Verifica Stati Finali:");
+
+            // Rileggiamo dal DB per conferma assoluta
+            Expense dbExpOk = metadata.findById(expOk.getId()).get();
+            Expense dbExpKo = metadata.findById(expKo.getId()).get();
+
+            System.out.println("   Spesa A (Completa): " + dbExpOk.getExpenseState());
+            if (dbExpOk.getExpenseState() == ExpenseState.COMPLETED) System.out.println("   -> [PASS] Corretto.");
+            else System.err.println("   -> [FAIL] Doveva essere COMPLETED!");
+
+            System.out.println("   Spesa B (Incompleta): " + dbExpKo.getExpenseState());
+            if (dbExpKo.getExpenseState() == ExpenseState.PARTIAL) {
+                System.out.println("   -> [PASS] Corretto.");
+                // Controllo manuale cosa manca
+                ComplianceResult res = complianceService.checkCompliance(dbExpKo);
+                System.out.println("      Mancano: " + res.getMissingDocuments());
+            } else {
+                System.err.println("   -> [FAIL] Doveva essere PARTIAL!");
             }
 
-            // 6. TEST 2: CARATTERI SPECIALI (Sanitization)
-            System.out.println("\n--- TEST 2: Stress Test Sanitization ---");
-            Expense weirdExp = new Expense("2024", me, ExpenseType.VISITA_MEDICA, "Visita Oculistica/Dentista & Co.", "10/12/2024");
-            Attachment weirdAtt = new Attachment(DocumentType.RICETTA_MEDICA, "ricetta_strana_@#[].txt", new ByteArrayInputStream("DATA".getBytes()));
-
-            service.registerExpense(weirdExp, List.of(weirdAtt));
-            System.out.println(">> Spesa con caratteri speciali salvata.");
-            verifyFileExists(weirdExp);
-
-            // 7. TEST 3: ROLLBACK (Simulazione Guasto)
-            System.out.println("\n--- TEST 3: Rollback Simulation ---");
-            runRollbackTest(service);
-
-            System.out.println("\n=== SUCCESSO: TUTTI I TEST PASSATI ===");
-            System.out.println("Controlla manualmente la cartella: " + new File(TEST_ROOT).getAbsolutePath());
+            System.out.println("\n=== TEST COMPLETATO ===");
 
         } catch (Exception e) {
-            System.err.println("!!! TEST FALLITO !!!");
             e.printStackTrace();
             System.exit(1);
         }
     }
 
-    // Helper per inserire la persona bypassando il service (che gestisce solo spese)
-    private static void bootstrapPerson(SQLiteMetadata metadata, Person p) throws Exception {
-        // Usiamo una connessione diretta SQLite per preparare il terreno
-        File dbFile = new File(TEST_ROOT, "taxreport.db");
-        String url = "jdbc:sqlite:" + dbFile.getAbsolutePath();
+    private static void createDummyRulesFile() throws Exception {
+        File configDir = new File(TEST_ROOT, "config");
+        configDir.mkdirs();
+        File jsonFile = new File(configDir, "rules_2024.json");
 
-        try (Connection conn = DriverManager.getConnection(url);
+        // Scriviamo un JSON valido basato sui tuoi Enum attuali
+        String json = """
+        {
+          "PAGAMENTO_UNIVERSITARIO": [
+            "FATTURA",
+            "RICEVUTA_PAGAMENTO"
+          ]
+        }
+        """;
+
+        try (FileWriter fw = new FileWriter(jsonFile)) {
+            fw.write(json);
+        }
+        System.out.println("-> Configurazione Rules creata in: " + jsonFile.getAbsolutePath());
+    }
+
+    private static ByteArrayInputStream stream(String s) {
+        return new ByteArrayInputStream(s.getBytes(StandardCharsets.UTF_8));
+    }
+
+    private static void bootstrapPerson(SQLiteMetadata metadata, Person p) throws Exception {
+        File dbFile = new File(TEST_ROOT, "taxreport.db");
+        try (Connection conn = DriverManager.getConnection("jdbc:sqlite:" + dbFile.getAbsolutePath());
              PreparedStatement ps = conn.prepareStatement("INSERT OR IGNORE INTO persons (id, name, fiscal_code) VALUES (?, ?, ?)")) {
             ps.setString(1, p.getId().toString());
             ps.setString(2, p.getName());
             ps.setString(3, p.getFiscalCode());
             ps.executeUpdate();
-            System.out.println("-> Bootstrap Anagrafica: OK");
-        }
-    }
-
-    private static void verifyFileExists(Expense e) {
-        Document doc = e.getDocuments().iterator().next();
-        File f = new File(TEST_ROOT, doc.getRelativePath()); // Storage locale usa path relativi alla root
-        if (f.exists()) {
-            System.out.println("   [OK] File trovato su disco: " + f.getName());
-        } else {
-            throw new RuntimeException("   [FAIL] File non trovato: " + f.getAbsolutePath());
-        }
-    }
-
-    private static void runRollbackTest(TaxReportService service) {
-        // Creiamo una persona che NON esiste nel DB per forzare errore FK
-        Person ghost = new Person("Ghost", "GHOST000");
-        Expense failExp = new Expense("2024", ghost, ExpenseType.VISITA_VETERINARIA, "Rollback", "01/01/2024");
-        Attachment att = new Attachment(DocumentType.RICEVUTA_PAGAMENTO, "file_fantasma.txt", new ByteArrayInputStream("X".getBytes()));
-
-        try {
-            service.registerExpense(failExp, List.of(att));
-            throw new RuntimeException("Il test doveva fallire ma non l'ha fatto!");
-        } catch (Exception e) {
-            System.out.println(">> Eccezione catturata (Atteso): " + e.getMessage());
-
-            // Verifica che il file sia stato cancellato
-            // Dobbiamo ricostruire il path teorico per controllare
-            // Ma siccome il service ha fatto rollback, non abbiamo l'oggetto popolato facilmente qui fuori
-            // Ci fidiamo del log "Rollback parziale fallito" se apparisse, o dell'assenza di file nella cartella ghost.
-            File ghostDir = new File(TEST_ROOT + "/2024/GHOST000");
-            if (ghostDir.exists() && ghostDir.list().length > 0) {
-                // Nota: Le cartelle vuote potrebbero rimanere (createFolder non ha rollback), ma i file no.
-                // Se trovi file dentro, il rollback non ha funzionato.
-                // Per essere precisi cerchiamo il file specifico
-                // Ma qui è difficile calcolare il path esatto senza duplicare la logica del service.
-                System.out.println("   [OK] Eccezione gestita correttamente.");
-            } else {
-                System.out.println("   [OK] Rollback confermato (nessun file residuo evidente).");
-            }
         }
     }
 }
