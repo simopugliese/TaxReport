@@ -1,0 +1,22 @@
+sequenceDiagram
+    participant User
+    participant Command as UploadDocumentCommand
+    participant Bus as EventBus
+    participant Listener as ConsoleLogListener
+
+    User->>Command: execute()
+
+    rect rgb(240, 248, 255)
+        Note right of Command: Core Logic
+        Command->>Command: Domain actions...
+        Command->>Command: Save to Repo...
+    end
+
+    Command->>Bus: publish(new StatusChangedEvent(id, COMPLIANT))
+
+    par Async / Decoupled
+        Bus->>Listener: onEvent(event)
+        Listener->>Listener: System.out.println("Spesa COMPLIANT!")
+    and
+        Command-->>User: Return OK
+    end

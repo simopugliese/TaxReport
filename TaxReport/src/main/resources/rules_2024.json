@@ -1,0 +1,18 @@
+[
+  {
+    "id": "spese_mediche",
+    "description": "Spese Sanitarie Detraibili",
+    "requirements": [
+      {
+        "type": "INVOICE",
+        "mandatory": true,
+        "filenameConvention": "Fattura.pdf"
+      },
+      {
+        "type": "PAYMENT",
+        "mandatory": true,
+        "filenameConvention": "Pagamento.pdf"
+      }
+    ]
+  }
+]

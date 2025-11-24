@@ -1,0 +1,19 @@
+stateDiagram-v2
+    direction LR
+
+    [*] --> OpenState : Created
+
+    state OpenState {
+        [*] --> Empty
+        Empty --> Partial : Upload First Doc
+        Partial --> Compliant : All Rules Passed
+        Compliant --> Partial : Delete Mandatory Doc
+    }
+
+    OpenState --> LockedState : lock() / Year End
+
+    state LockedState {
+        Note: Throws Exception on Upload/Delete
+    }
+
+    LockedState --> [*]

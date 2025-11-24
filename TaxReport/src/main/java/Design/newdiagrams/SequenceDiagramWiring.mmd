@@ -1,0 +1,22 @@
+sequenceDiagram
+    autonumber
+    participant Main as Application Root
+    participant SL as java.util.ServiceLoader
+    participant SPI as StorageProvider (Interface)
+    participant Impl as FileSystemProvider (Concrete)
+    participant Svc as StorageService (Instance)
+
+    Note over Main, Svc: Fase di Bootstrap (Wiring)
+
+    Main->>SL: load(StorageProvider.class)
+    SL->>SL: Scan META-INF/services/
+    SL-->>Main: Iterator<StorageProvider>
+
+    Main->>SPI: create(Config) (Polimorfismo)
+
+    Note right of Main: Main non conosce "FileSystemProvider",<br/>vede solo l'interfaccia SPI.
+
+    SPI->>Impl: new FileSystemStorageStrategy(...)
+    Impl-->>Main: StorageService (Ready to use)
+
+    Main->>Main: Inject into TaxReportService

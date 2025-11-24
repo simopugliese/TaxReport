@@ -1,0 +1,49 @@
+sequenceDiagram
+    autonumber
+    participant Client
+    participant Service as TaxReportService
+    participant Cmd as UploadCommand
+    participant Entry as ExpenseEntry (Domain)
+    participant State as OpenState
+    participant Store as StorageService
+    participant Repo as MetadataRepository
+
+    Note over Client, Service: Richiesta Upload (TaxReport 2.0)
+
+    Client->>Service: uploadDocument(id, type, stream)
+    activate Service
+
+    Note right of Service: 1. Command Creation
+    Service->>Cmd: new UploadCommand(id, type, stream)
+    Service->>Cmd: execute()
+    activate Cmd
+
+    Cmd->>Repo: findById(id)
+    Repo-->>Cmd: ExpenseStateDTO
+    Cmd->>Entry: fromDTO(dto) (Reidratazione)
+
+    Note right of Cmd: 2. Domain Logic Delegation
+    Cmd->>Entry: uploadDocument(type, stream)
+    activate Entry
+
+    Entry->>State: upload(this, type, stream)
+    activate State
+
+    Note right of State: 3. Business Logic & Storage
+    State->>Store: saveFile(path, stream)
+    State->>Entry: markSlotFilled(type)
+    State->>Entry: validate() (Trigger Rule Engine)
+
+    deactivate State
+    deactivate Entry
+
+    Note right of Cmd: 4. Persistence via DTO
+    Cmd->>Entry: toDTO()
+    Entry-->>Cmd: ExpenseStateDTO
+    Cmd->>Repo: save(ExpenseStateDTO)
+
+    Cmd-->>Service: Success
+    deactivate Cmd
+
+    Service-->>Client: 200 OK
+    deactivate Service
