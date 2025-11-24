@@ -29,7 +29,8 @@ public class MariaDbMetadata implements MetadataInterface {
         }
     }
 
-    private Connection getConnection() throws SQLException {
+    //todo: messo a protected solo per i test ma va private
+    protected Connection getConnection() throws SQLException {
         return DriverManager.getConnection(connectionString, user, password);
     }
 
