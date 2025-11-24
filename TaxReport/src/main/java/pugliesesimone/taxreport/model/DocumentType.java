@@ -2,6 +2,8 @@ package pugliesesimone.taxreport.model;
 
 public enum DocumentType {
     FATTURA,
-    SCONTRINO,
-    RICETTA
+    RICETTA_MEDICA,
+    PRESCRIZIONE_MEDICA,
+    REFERTO_MEDICO,
+    RICEVUTA_PAGAMENTO
 }
