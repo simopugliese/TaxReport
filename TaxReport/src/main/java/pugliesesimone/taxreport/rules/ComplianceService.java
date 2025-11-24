@@ -24,20 +24,20 @@ public class ComplianceService {
         this.ruleEngine = ruleEngine;
     }
 
+    /**
+     * Verifica una singola spesa (sola lettura).
+     */
     public ComplianceResult checkCompliance(Expense expense) {
-        // 1. Chiedi al RuleEngine cosa serve per questo Anno e Tipo
         List<DocumentType> requiredTypes = ruleEngine.getMandatoryDocuments(expense.getYear(), expense.getExpenseType());
 
         if (requiredTypes.isEmpty()) {
             return new ComplianceResult(true, List.of());
         }
 
-        // 2. Cosa abbiamo caricato?
         Set<DocumentType> presentTypes = expense.getDocuments().stream()
                 .map(Document::getDocumentType)
                 .collect(Collectors.toSet());
 
-        // 3. Calcola Delta
         List<DocumentType> missing = new ArrayList<>();
         for (DocumentType req : requiredTypes) {
             if (!presentTypes.contains(req)) {
@@ -49,27 +49,31 @@ public class ComplianceService {
     }
 
     /**
-     * Scansiona una lista di spese, verifica la compliance e aggiorna lo stato su DB
-     * (es. passa da PARTIAL a COMPLETED).
+     * ESEGUE IL REPORT E AGGIORNA IL DB.
+     * Itera sulla lista, calcola il nuovo stato e salva se cambiato.
      */
     public void validateAndUpdateStatus(List<Expense> expenses) {
         for (Expense exp : expenses) {
-            // Se è BLOCKED (blocco manuale utente), non tocchiamo nulla
+            // Se l'utente ha forzato BLOCKED, non lo tocchiamo automaticamente
             if (exp.getExpenseState() == ExpenseState.BLOCKED) continue;
 
             ComplianceResult result = checkCompliance(exp);
 
-            // Logica di transizione stato
+            // Logica di transizione stato:
+            // COMPLIANT -> COMPLETED
+            // NON COMPLIANT -> PARTIAL (o resta INITIAL se non ha proprio nulla, ma PARTIAL è più sicuro)
             ExpenseState newState = result.isCompliant() ? ExpenseState.COMPLETED : ExpenseState.PARTIAL;
 
-            // Aggiorniamo solo se lo stato cambia per evitare write inutili su DB
+            // Ottimizzazione: scriviamo su DB solo se lo stato cambia davvero
             if (newState != exp.getExpenseState()) {
+                logger.info("Aggiornamento stato spesa {}: {} -> {}", exp.getId(), exp.getExpenseState(), newState);
+
                 exp.setExpenseState(newState);
+
                 try {
-                    metadata.save(exp);
-                    logger.info("Stato spesa {} aggiornato a {}", exp.getId(), newState);
+                    metadata.save(exp); // [IMPORTANTE] Qui avviene la persistenza del nuovo stato
                 } catch (Exception e) {
-                    logger.error("Errore salvataggio stato spesa {}", exp.getId(), e);
+                    logger.error("Errore critico salvataggio stato per spesa {}", exp.getId(), e);
                 }
             }
         }

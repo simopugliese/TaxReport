@@ -31,7 +31,6 @@ public class RuleEngine {
 
     /**
      * Ritorna la lista dei documenti obbligatori per un dato anno e tipo di spesa.
-     * Se non trova il file di regole per l'anno, assume che non ci siano obblighi (lista vuota).
      */
     public List<DocumentType> getMandatoryDocuments(String year, ExpenseType type) {
         Map<ExpenseType, List<DocumentType>> rulesForYear = ruleCache.computeIfAbsent(year, this::loadRulesFromStorage);
@@ -39,12 +38,12 @@ public class RuleEngine {
     }
 
     /**
-     * Carica il file rules_{YEAR}.json dallo storage (es. config/rules_2024.json)
+     * Carica il file rules_{YEAR}.json dallo storage.
      */
     private Map<ExpenseType, List<DocumentType>> loadRulesFromStorage(String year) {
         String filename = "rules_" + year + ".json";
 
-        // Verifica esistenza cartella config (creala se non esiste, per comodità)
+        // Se la cartella config non esiste, prova a crearla (opzionale)
         if (!storage.existsFolder(CONFIG_FOLDER)) {
             try {
                 storage.createFolder(CONFIG_FOLDER);
@@ -54,19 +53,14 @@ public class RuleEngine {
         }
 
         try (InputStream is = storage.loadFile(CONFIG_FOLDER, filename)) {
-            // Parsing JSON: { "VISITA_MEDICA": ["FATTURA"], ... }
             return mapper.readValue(is, new TypeReference<Map<ExpenseType, List<DocumentType>>>() {});
         } catch (Exception e) {
-            logger.warn("Nessun file regole trovato per l'anno {} (cercato: {}/{}), oppure errore di parsing. Nessuna regola applicata.",
+            logger.warn("Nessun file regole trovato per l'anno {} (path: {}/{}), o errore JSON. Applico 0 regole.",
                     year, CONFIG_FOLDER, filename);
-            // Ritorna mappa vuota: nessuna regola = tutto lecito
             return Collections.emptyMap();
         }
     }
 
-    /**
-     * Forza lo svuotamento della cache (utile se modifichi il JSON a runtime)
-     */
     public void reloadRules() {
         ruleCache.clear();
     }
