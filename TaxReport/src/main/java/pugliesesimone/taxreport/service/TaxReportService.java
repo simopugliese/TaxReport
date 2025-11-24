@@ -9,12 +9,15 @@ import pugliesesimone.taxreport.storage.StorageInterface;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.nio.file.Paths;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.regex.Pattern;
 
 public class TaxReportService {
     private static final Logger logger = LoggerFactory.getLogger(TaxReportService.class);
+
+    private static final Pattern SAFE_FILENAME_PATTERN = Pattern.compile("[^\\p{L}\\p{N}\\.\\-_]");
 
     private final StorageInterface storage;
     private final MetadataInterface metadata;
@@ -36,7 +39,7 @@ public class TaxReportService {
                 expense.getId().toString()
         );
 
-        String folderPath = Paths.get(
+        String folderPath = Path.of(
                 expense.getYear(),
                 expense.getPerson().getFiscalCode(),
                 expense.getExpenseType().name(),
@@ -46,7 +49,6 @@ public class TaxReportService {
         try {
             if (!storage.existsFolder(folderPath)) {
                 boolean created = storage.createFolder(folderPath);
-
                 if (!created && !storage.existsFolder(folderPath)) {
                     throw new ServiceException("Impossibile creare cartella: " + folderPath);
                 }
@@ -59,7 +61,7 @@ public class TaxReportService {
                     throw new ServiceException("Errore IO salvataggio file: " + safeFilename);
                 }
 
-                String fullPath = Paths.get(folderPath, safeFilename).toString();
+                String fullPath = Path.of(folderPath, safeFilename).toString();
                 Document doc = new Document(att.getType(), fullPath);
 
                 savedDocuments.add(doc);
@@ -86,7 +88,7 @@ public class TaxReportService {
     private void rollbackFiles(List<Document> documents) {
         for (Document doc : documents) {
             try {
-                java.nio.file.Path p = java.nio.file.Path.of(doc.getRelativePath());
+                Path p = Path.of(doc.getRelativePath());
                 String filename = p.getFileName().toString();
                 String folder = p.getParent() != null ? p.getParent().toString() : "";
 
@@ -99,11 +101,6 @@ public class TaxReportService {
 
     private String sanitize(String input) {
         if (input == null || input.isBlank()) return "";
-
-        // \p{L} = Qualsiasi lettera Unicode (inclusi à, è, é, ì, ò, ù)
-        // \p{N} = Qualsiasi numero
-        // \. \- _ = Punto, trattino, underscore (già sicuri)
-        // Tutto il resto (spazi, slash, emoji, simboli strani) diventa "_"
-        return input.trim().replaceAll("[^\\p{L}\\p{N}\\.\\-_]", "_");
+        return SAFE_FILENAME_PATTERN.matcher(input.trim()).replaceAll("_");
     }
 }

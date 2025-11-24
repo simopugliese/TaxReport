@@ -12,6 +12,9 @@ import java.util.Optional;
 import java.util.UUID;
 
 public class MariaDbMetadata implements MetadataInterface {
+
+    private static final int MYSQL_FK_CONSTRAINT_VIOLATION = 1452;
+
     private final String connectionString;
     private final String user;
     private final String password;
@@ -29,7 +32,10 @@ public class MariaDbMetadata implements MetadataInterface {
         }
     }
 
-    //todo: messo a protected solo per i test ma va private
+    /**
+     * Ottiene una nuova connessione al Database.
+     * Visibilità 'protected' per consentire l'override nei Unit Test (Pattern: Subclass and Override).
+     */
     protected Connection getConnection() throws SQLException {
         return DriverManager.getConnection(connectionString, user, password);
     }
@@ -100,10 +106,9 @@ public class MariaDbMetadata implements MetadataInterface {
                 ps.setString(7, expense.getExpenseState().name());
                 ps.executeUpdate();
             } catch (SQLException e) {
-                // Rollback immediato prima di lanciare eccezione
-                try { conn.rollback(); } catch (SQLException ex) { /* Logga errore rollback */ }
+                try { conn.rollback(); } catch (SQLException ex) { /* Log */ }
 
-                if (e.getErrorCode() == 1452) {
+                if (e.getErrorCode() == MYSQL_FK_CONSTRAINT_VIOLATION) {
                     throw new PersonNotFoundException("Persona non trovata (FK violation): " + expense.getPerson().getId());
                 }
                 throw e;
@@ -113,7 +118,7 @@ public class MariaDbMetadata implements MetadataInterface {
                 ps.setString(1, expense.getId().toString());
                 ps.executeUpdate();
             } catch (SQLException e) {
-                try { conn.rollback(); } catch (SQLException ex) { /* Logga errore rollback */ }
+                try { conn.rollback(); } catch (SQLException ex) { /* Log */ }
                 throw e;
             }
 
@@ -128,7 +133,7 @@ public class MariaDbMetadata implements MetadataInterface {
                     }
                     ps.executeBatch();
                 } catch (SQLException e) {
-                    try { conn.rollback(); } catch (SQLException ex) { /* Logga errore rollback */ }
+                    try { conn.rollback(); } catch (SQLException ex) { /* Log */ }
                     throw e;
                 }
             }
@@ -153,7 +158,6 @@ public class MariaDbMetadata implements MetadataInterface {
         Expense expense = null;
 
         try (Connection conn = getConnection()) {
-
             try (PreparedStatement ps = conn.prepareStatement(sqlExpense)) {
                 ps.setString(1, id.toString());
                 try (ResultSet rs = ps.executeQuery()) {
@@ -179,7 +183,6 @@ public class MariaDbMetadata implements MetadataInterface {
                 }
             }
 
-
             List<Document> docs = new ArrayList<>();
             try (PreparedStatement ps = conn.prepareStatement(sqlDocs)) {
                 ps.setString(1, id.toString());
@@ -195,7 +198,6 @@ public class MariaDbMetadata implements MetadataInterface {
                 }
             }
             expense.setDocuments(docs);
-
             return Optional.of(expense);
 
         } catch (SQLException e) {

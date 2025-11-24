@@ -1,7 +1,6 @@
 package pugliesesimone.taxreport.storage;
 
 import com.hierynomus.msdtyp.AccessMask;
-import com.hierynomus.msfscc.FileAttributes;
 import com.hierynomus.mssmb2.SMB2CreateDisposition;
 import com.hierynomus.mssmb2.SMB2ShareAccess;
 import com.hierynomus.smbj.SMBClient;
@@ -12,8 +11,6 @@ import com.hierynomus.smbj.share.DiskShare;
 import com.hierynomus.smbj.share.File;
 import pugliesesimone.taxreport.exception.StorageException;
 
-import java.io.ByteArrayInputStream;
-import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.util.EnumSet;
@@ -21,6 +18,9 @@ import java.util.HashSet;
 import java.util.Set;
 
 public class SmbStorage implements StorageInterface {
+
+    private static final int BUFFER_SIZE = 8192;
+
     private final String hostname;
     private final String shareName;
     private final AuthenticationContext auth;
@@ -66,7 +66,7 @@ public class SmbStorage implements StorageInterface {
                     fullPath, accessMask, null, shareAccess,
                     SMB2CreateDisposition.FILE_OVERWRITE_IF, null)) {
 
-                byte[] buffer = new byte[8192];
+                byte[] buffer = new byte[BUFFER_SIZE];
                 int bytesRead;
                 long fileOffset = 0;
 
@@ -89,7 +89,9 @@ public class SmbStorage implements StorageInterface {
 
             String fullPath = normalizePath(relativePath + "/" + filename);
             if (!share.fileExists(fullPath)) {
-                share.close(); session.close(); connection.close();
+                share.close();
+                session.close();
+                connection.close();
                 throw new StorageException("File non trovato su SMB: " + fullPath, null);
             }
 
@@ -98,7 +100,6 @@ public class SmbStorage implements StorageInterface {
 
             File file = share.openFile(fullPath, accessMask, null, shareAccess, SMB2CreateDisposition.FILE_OPEN, null);
 
-            // Restituiamo uno stream che sa come leggere il file SMB a pezzi
             return new SmbFileInputStream(connection, session, share, file);
 
         } catch (Exception e) {
@@ -114,7 +115,10 @@ public class SmbStorage implements StorageInterface {
         private long offset = 0;
 
         public SmbFileInputStream(Connection c, Session s, DiskShare sh, File f) {
-            this.connection = c; this.session = s; this.share = sh; this.file = f;
+            this.connection = c;
+            this.session = s;
+            this.share = sh;
+            this.file = f;
         }
 
         @Override
@@ -136,10 +140,10 @@ public class SmbStorage implements StorageInterface {
 
         @Override
         public void close() throws IOException {
-            try { file.close(); } catch(Exception ignored) {}
-            try { share.close(); } catch(Exception ignored) {}
-            try { session.close(); } catch(Exception ignored) {}
-            try { connection.close(); } catch(Exception ignored) {}
+            try { file.close(); } catch (Exception ignored) {}
+            try { share.close(); } catch (Exception ignored) {}
+            try { session.close(); } catch (Exception ignored) {}
+            try { connection.close(); } catch (Exception ignored) {}
         }
     }
 

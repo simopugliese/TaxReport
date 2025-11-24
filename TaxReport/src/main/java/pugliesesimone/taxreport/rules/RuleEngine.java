@@ -8,6 +8,7 @@ import pugliesesimone.taxreport.model.DocumentType;
 import pugliesesimone.taxreport.model.ExpenseType;
 import pugliesesimone.taxreport.storage.StorageInterface;
 
+import java.io.IOException;
 import java.io.InputStream;
 import java.util.Collections;
 import java.util.List;
@@ -20,8 +21,6 @@ public class RuleEngine {
 
     private final StorageInterface storage;
     private final ObjectMapper mapper;
-
-    // Cache: Anno -> Mappa Regole (ExpenseType -> Lista Documenti)
     private final Map<String, Map<ExpenseType, List<DocumentType>>> ruleCache = new ConcurrentHashMap<>();
 
     public RuleEngine(StorageInterface storage) {
@@ -29,21 +28,14 @@ public class RuleEngine {
         this.mapper = new ObjectMapper();
     }
 
-    /**
-     * Ritorna la lista dei documenti obbligatori per un dato anno e tipo di spesa.
-     */
     public List<DocumentType> getMandatoryDocuments(String year, ExpenseType type) {
         Map<ExpenseType, List<DocumentType>> rulesForYear = ruleCache.computeIfAbsent(year, this::loadRulesFromStorage);
         return rulesForYear.getOrDefault(type, Collections.emptyList());
     }
 
-    /**
-     * Carica il file rules_{YEAR}.json dallo storage.
-     */
     private Map<ExpenseType, List<DocumentType>> loadRulesFromStorage(String year) {
         String filename = "rules_" + year + ".json";
 
-        // Se la cartella config non esiste, prova a crearla (opzionale)
         if (!storage.existsFolder(CONFIG_FOLDER)) {
             try {
                 storage.createFolder(CONFIG_FOLDER);
@@ -54,9 +46,12 @@ public class RuleEngine {
 
         try (InputStream is = storage.loadFile(CONFIG_FOLDER, filename)) {
             return mapper.readValue(is, new TypeReference<Map<ExpenseType, List<DocumentType>>>() {});
-        } catch (Exception e) {
+        } catch (IOException e) {
             logger.warn("Nessun file regole trovato per l'anno {} (path: {}/{}), o errore JSON. Applico 0 regole.",
                     year, CONFIG_FOLDER, filename);
+            return Collections.emptyMap();
+        } catch (Exception e) {
+            logger.error("Errore imprevisto nel caricamento regole per l'anno {}", year, e);
             return Collections.emptyMap();
         }
     }
