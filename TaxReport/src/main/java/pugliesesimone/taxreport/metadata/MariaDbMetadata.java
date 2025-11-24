@@ -34,10 +34,8 @@ public class MariaDbMetadata implements MetadataInterface {
     }
 
     private void initDatabase() {
-        try (Connection conn = getConnection(); // O DriverManager.getConnection(...) se sei in SQLMetadata
+        try (Connection conn = getConnection();
              Statement stmt = conn.createStatement()) {
-
-            // Rimossi 'ENGINE=InnoDB' per compatibilità con SQLite
 
             stmt.execute("""
                 CREATE TABLE IF NOT EXISTS persons (
@@ -101,7 +99,9 @@ public class MariaDbMetadata implements MetadataInterface {
                 ps.setString(7, expense.getExpenseState().name());
                 ps.executeUpdate();
             } catch (SQLException e) {
-                // Error code 1452 è Foreign Key constraint fail in MySQL/MariaDB
+                // Rollback immediato prima di lanciare eccezione
+                try { conn.rollback(); } catch (SQLException ex) { /* Logga errore rollback */ }
+
                 if (e.getErrorCode() == 1452) {
                     throw new PersonNotFoundException("Persona non trovata (FK violation): " + expense.getPerson().getId());
                 }
@@ -111,6 +111,9 @@ public class MariaDbMetadata implements MetadataInterface {
             try (PreparedStatement ps = conn.prepareStatement(sqlDeleteDocs)) {
                 ps.setString(1, expense.getId().toString());
                 ps.executeUpdate();
+            } catch (SQLException e) {
+                try { conn.rollback(); } catch (SQLException ex) { /* Logga errore rollback */ }
+                throw e;
             }
 
             if (!expense.getDocuments().isEmpty()) {
@@ -123,6 +126,9 @@ public class MariaDbMetadata implements MetadataInterface {
                         ps.addBatch();
                     }
                     ps.executeBatch();
+                } catch (SQLException e) {
+                    try { conn.rollback(); } catch (SQLException ex) { /* Logga errore rollback */ }
+                    throw e;
                 }
             }
 

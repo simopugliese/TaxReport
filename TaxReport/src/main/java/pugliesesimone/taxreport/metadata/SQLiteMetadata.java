@@ -77,8 +77,6 @@ public class SQLiteMetadata implements MetadataInterface {
 
     @Override
     public void save(Expense expense) {
-        // Niente più INSERT OR IGNORE sulla tabella persons!
-
         String sqlExpense = """
             INSERT OR REPLACE INTO expenses
             (id, year, person_id, type, description, raw_date, state)
@@ -93,18 +91,45 @@ public class SQLiteMetadata implements MetadataInterface {
         try (Connection conn = DriverManager.getConnection(connectionString)) {
             conn.setAutoCommit(false); // Start Transaction
 
-            // 1. Salva Header Spesa (Ora può fallire se person_id non esiste)
-            try (PreparedStatement ps = conn.prepareStatement(sqlExpense)) {
-                ps.setString(1, expense.getId().toString());
-                ps.setString(2, expense.getYear());
-                ps.setString(3, expense.getPerson().getId().toString()); // FK Critica
-                ps.setString(4, expense.getExpenseType().name());
-                ps.setString(5, expense.getDescription());
-                ps.setString(6, expense.getRawDate());
-                ps.setString(7, expense.getExpenseState().name());
-                ps.executeUpdate();
+            try {
+                // 1. Salva Header Spesa
+                try (PreparedStatement ps = conn.prepareStatement(sqlExpense)) {
+                    ps.setString(1, expense.getId().toString());
+                    ps.setString(2, expense.getYear());
+                    ps.setString(3, expense.getPerson().getId().toString());
+                    ps.setString(4, expense.getExpenseType().name());
+                    ps.setString(5, expense.getDescription());
+                    ps.setString(6, expense.getRawDate());
+                    ps.setString(7, expense.getExpenseState().name());
+                    ps.executeUpdate();
+                }
+
+                // 2. Elimina vecchi documenti
+                try (PreparedStatement ps = conn.prepareStatement(sqlDeleteDocs)) {
+                    ps.setString(1, expense.getId().toString());
+                    ps.executeUpdate();
+                }
+
+                // 3. Inserisci Documenti attuali
+                if (!expense.getDocuments().isEmpty()) {
+                    try (PreparedStatement ps = conn.prepareStatement(sqlInsertDoc)) {
+                        for (Document doc : expense.getDocuments()) {
+                            ps.setString(1, doc.getId().toString());
+                            ps.setString(2, expense.getId().toString());
+                            ps.setString(3, doc.getDocumentType().name());
+                            ps.setString(4, doc.getRelativePath());
+                            ps.addBatch();
+                        }
+                        ps.executeBatch();
+                    }
+                }
+
+                conn.commit();
 
             } catch (SQLException e) {
+                // Rollback esplicito in caso di errore
+                try { conn.rollback(); } catch (SQLException ex) { /* Logga errore rollback */ }
+
                 if (e.getErrorCode() == 19) { // SQLite Error Code 19 = SQLITE_CONSTRAINT
                     throw new PersonNotFoundException("Impossibile salvare la spesa: La persona con ID "
                             + expense.getPerson().getId() + " non esiste nel database.");
@@ -112,37 +137,12 @@ public class SQLiteMetadata implements MetadataInterface {
                 throw e;
             }
 
-            // 2. Elimina vecchi documenti
-            try (PreparedStatement ps = conn.prepareStatement(sqlDeleteDocs)) {
-                ps.setString(1, expense.getId().toString());
-                ps.executeUpdate();
-            }
-
-            // 3. Inserisci Documenti attuali
-            if (!expense.getDocuments().isEmpty()) {
-                try (PreparedStatement ps = conn.prepareStatement(sqlInsertDoc)) {
-                    for (Document doc : expense.getDocuments()) {
-                        ps.setString(1, doc.getId().toString());
-                        ps.setString(2, expense.getId().toString());
-                        ps.setString(3, doc.getDocumentType().name());
-                        ps.setString(4, doc.getRelativePath());
-                        ps.addBatch();
-                    }
-                    ps.executeBatch();
-                }
-            }
-
-            conn.commit();
-
         } catch (SQLException e) {
-            // Se abbiamo intercettato l'FK sopra non arriveremo qui,
-            // ma per altri errori di rollback/commit serve il catch generale
             throw new StorageException("Errore salvataggio spesa: " + expense.getId(), e);
         }
     }
 
     public Optional<Expense> findById(UUID id) {
-        // Rimossi spazi a fine riga nel text block
         String sqlExpense = """
             SELECT e.*, p.name as person_name, p.fiscal_code as person_fc
             FROM expenses e
@@ -160,14 +160,12 @@ public class SQLiteMetadata implements MetadataInterface {
                 ps.setString(1, id.toString());
                 try (ResultSet rs = ps.executeQuery()) {
                     if (rs.next()) {
-                        // Ricostruzione Persona
                         Person person = new Person(
                                 UUID.fromString(rs.getString("person_id")),
                                 rs.getString("person_name"),
                                 rs.getString("person_fc")
                         );
 
-                        // Ricostruzione Expense
                         expense = new Expense(
                                 UUID.fromString(rs.getString("id")),
                                 rs.getString("year"),
@@ -199,7 +197,6 @@ public class SQLiteMetadata implements MetadataInterface {
                 }
             }
 
-            // Idrata la collection
             expense.setDocuments(docs);
 
             return Optional.of(expense);
