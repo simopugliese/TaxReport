@@ -1,5 +1,7 @@
 package pugliesesimone.taxreport.metadata;
 
+import pugliesesimone.taxreport.exception.ConfigurationException;
+import pugliesesimone.taxreport.exception.PersonNotFoundException;
 import pugliesesimone.taxreport.exception.StorageException;
 import pugliesesimone.taxreport.model.*;
 
@@ -10,13 +12,27 @@ import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
-public class SQLMetadata {
+public class SQLMetadata implements MetadataInterface {
     private final String connectionString;
 
     public SQLMetadata(String rootPath) {
+        if (rootPath == null || rootPath.isBlank()) {
+            throw new ConfigurationException("Il path di root per il database non può essere vuoto.");
+        }
+
+        File rootDir = new File(rootPath);
+        if (!rootDir.exists() || !rootDir.isDirectory()) {
+            throw new ConfigurationException("La directory di root specificata non esiste o non è valida: " + rootPath);
+        }
+
         File dbFile = new File(rootPath, "taxreport.db");
-        this.connectionString = "jdbc:sqlite:" + dbFile.getAbsolutePath();
-        initDatabase();
+        this.connectionString = "jdbc:sqlite:" + dbFile.getAbsolutePath() + "?foreign_keys=on";
+
+        try {
+            initDatabase();
+        } catch (StorageException e) {
+            throw new ConfigurationException("Impossibile inizializzare lo schema del database.", e);
+        }
     }
 
     private void initDatabase() {
@@ -59,8 +75,10 @@ public class SQLMetadata {
         }
     }
 
+    @Override
     public void save(Expense expense) {
-        // Rimossi spazi a fine riga nel text block
+        // Niente più INSERT OR IGNORE sulla tabella persons!
+
         String sqlExpense = """
             INSERT OR REPLACE INTO expenses
             (id, year, person_id, type, description, raw_date, state)
@@ -75,19 +93,26 @@ public class SQLMetadata {
         try (Connection conn = DriverManager.getConnection(connectionString)) {
             conn.setAutoCommit(false); // Start Transaction
 
-            // 1. Salva Header Spesa
+            // 1. Salva Header Spesa (Ora può fallire se person_id non esiste)
             try (PreparedStatement ps = conn.prepareStatement(sqlExpense)) {
                 ps.setString(1, expense.getId().toString());
                 ps.setString(2, expense.getYear());
-                ps.setString(3, expense.getPerson().getId().toString()); // FK
+                ps.setString(3, expense.getPerson().getId().toString()); // FK Critica
                 ps.setString(4, expense.getExpenseType().name());
                 ps.setString(5, expense.getDescription());
                 ps.setString(6, expense.getRawDate());
                 ps.setString(7, expense.getExpenseState().name());
                 ps.executeUpdate();
+
+            } catch (SQLException e) {
+                if (e.getErrorCode() == 19) { // SQLite Error Code 19 = SQLITE_CONSTRAINT
+                    throw new PersonNotFoundException("Impossibile salvare la spesa: La persona con ID "
+                            + expense.getPerson().getId() + " non esiste nel database.");
+                }
+                throw e;
             }
 
-            // 2. Elimina vecchi documenti per questo ID (Full Sync della collection)
+            // 2. Elimina vecchi documenti
             try (PreparedStatement ps = conn.prepareStatement(sqlDeleteDocs)) {
                 ps.setString(1, expense.getId().toString());
                 ps.executeUpdate();
@@ -107,9 +132,11 @@ public class SQLMetadata {
                 }
             }
 
-            conn.commit(); // Commit Transaction
+            conn.commit();
 
         } catch (SQLException e) {
+            // Se abbiamo intercettato l'FK sopra non arriveremo qui,
+            // ma per altri errori di rollback/commit serve il catch generale
             throw new StorageException("Errore salvataggio spesa: " + expense.getId(), e);
         }
     }

@@ -82,7 +82,10 @@ public class Expense {
     }
 
     public void setDocuments(Collection<Document> docs) {
-        docs.forEach(this::addDocument);
+        this.documents.clear();
+        if (docs != null) {
+            this.documents.addAll(docs);
+        }
     }
 
     public Collection<Document> getDocumentByType(DocumentType documentType) {

@@ -74,6 +74,13 @@ public class FileSystemStorage implements StorageInterface {
         if (relative.startsWith("/") || relative.startsWith("\\")) {
             relative = relative.substring(1);
         }
-        return rootParams.resolve(relative);
+
+        Path resolved = rootParams.resolve(relative).normalize();
+
+        if (!resolved.startsWith(rootParams.normalize())) {
+            throw new StorageException("Accesso negato: tentativo di Path Traversal su " + relative, null);
+        }
+
+        return resolved;
     }
 }
