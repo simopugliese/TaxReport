@@ -20,21 +20,15 @@ class MariaDbMetadataTest {
 
     @Mock Connection connection;
     @Mock PreparedStatement preparedStatement;
-    @Mock Statement statement; // [FIX] Aggiunto mock per lo Statement (usato in initDatabase)
+    @Mock Statement statement;
     @Mock ResultSet resultSet;
 
     MariaDbMetadata metadata;
 
     @BeforeEach
     void setUp() throws SQLException {
-        // [FIX] Istruiamo la connessione PRIMA di chiamare il costruttore.
-        // initDatabase() chiamerà connection.createStatement(), dobbiamo assicurarci che non ritorni null.
-        // Usiamo lenient() perché initDatabase viene chiamato nel costruttore e Mockito potrebbe
-        // lamentarsi se lo stubbing avviene "fuori" dal test method in modalità strict,
-        // o se viene chiamato più volte.
         lenient().when(connection.createStatement()).thenReturn(statement);
 
-        // Creiamo una classe anonima per sovrascrivere getConnection()
         metadata = new MariaDbMetadata("localhost", 3306, "db", "u", "p") {
             @Override
             protected Connection getConnection() {
@@ -73,10 +67,11 @@ class MariaDbMetadataTest {
     }
 
     @Test
-    void save_ShouldThrowPersonNotFound_WhenFkError1452() throws SQLException {
+    void save_ShouldThrowPersonNotFound_WhenFkErrorIntegrityViolation() throws SQLException {
         Expense expense = new Expense("2024", new Person("P", "CF"), ExpenseType.VISITA_MEDICA, "D", "Data");
 
-        when(connection.prepareStatement(anyString())).thenThrow(new SQLException("FK Error", "State", 1452));
+        // FIX: Simuliamo un SQLState "23xxx" che indica violazione integrità (FK), invece di stringa a caso.
+        when(connection.prepareStatement(anyString())).thenThrow(new SQLException("FK Error", "23000", 1452));
 
         assertThrows(PersonNotFoundException.class, () -> metadata.save(expense));
         verify(connection).rollback();

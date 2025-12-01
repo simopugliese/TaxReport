@@ -5,6 +5,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import pugliesesimone.taxreport.exception.ConfigurationException;
 import pugliesesimone.taxreport.model.DocumentType;
 import pugliesesimone.taxreport.model.ExpenseType;
 import pugliesesimone.taxreport.storage.StorageInterface;
@@ -55,16 +56,16 @@ class RuleEngineTest {
     }
 
     @Test
-    void getMandatoryDocuments_ShouldReturnEmpty_WhenFileIsMissing() {
+    void getMandatoryDocuments_ShouldThrow_WhenFileIsMissing() {
         // Arrange: Simuliamo eccezione (file non trovato)
         when(storage.loadFile(anyString(), anyString())).thenThrow(new RuntimeException("File not found"));
 
-        // Act
-        List<DocumentType> docs = ruleEngine.getMandatoryDocuments("2024", ExpenseType.VISITA_VETERINARIA);
-
-        // Assert
-        assertNotNull(docs);
-        assertTrue(docs.isEmpty(), "Se il file manca, deve tornare lista vuota, non crashare");
+        // Act & Assert
+        // FIX: Ora ci aspettiamo un'eccezione anche qui, per evitare che il sistema
+        // cachi silenziosamente "nessuna regola" in caso di errori di I/O o file mancanti.
+        assertThrows(RuntimeException.class, () ->
+                ruleEngine.getMandatoryDocuments("2024", ExpenseType.VISITA_VETERINARIA)
+        );
     }
 
     @Test
@@ -84,16 +85,16 @@ class RuleEngineTest {
     }
 
     @Test
-    void getMandatoryDocuments_ShouldReturnEmpty_WhenJsonIsCorrupt() throws IOException {
+    void getMandatoryDocuments_ShouldThrow_WhenJsonIsCorrupt() throws IOException {
         // Arrange: JSON malformato
         String badJson = "{ \"VISITA_MEDICA\": [\"FATTURA\" ... ops rotto";
         when(storage.loadFile(anyString(), anyString()))
                 .thenReturn(new ByteArrayInputStream(badJson.getBytes(StandardCharsets.UTF_8)));
 
-        // Act
-        List<DocumentType> docs = ruleEngine.getMandatoryDocuments("2024", ExpenseType.VISITA_MEDICA);
-
-        // Assert
-        assertTrue(docs.isEmpty(), "Se il JSON è rotto, deve fallire silentemente e tornare lista vuota");
+        // Act & Assert
+        // FIX: Ora ci aspettiamo un'eccezione, non il silenzio.
+        assertThrows(ConfigurationException.class, () ->
+                ruleEngine.getMandatoryDocuments("2024", ExpenseType.VISITA_MEDICA)
+        );
     }
 }
