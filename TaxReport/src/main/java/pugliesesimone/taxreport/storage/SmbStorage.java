@@ -81,29 +81,47 @@ public class SmbStorage implements StorageInterface {
 
     @Override
     public InputStream loadFile(String relativePath, String filename) {
+        Connection connection = null;
+        Session session = null;
+        DiskShare share = null;
+        File file = null;
+        boolean success = false;
+
         try {
-            Connection connection = client.connect(hostname);
+            connection = client.connect(hostname);
             AuthenticationContext ac = new AuthenticationContext(auth.getUsername(), auth.getPassword(), auth.getDomain());
-            Session session = connection.authenticate(ac);
-            DiskShare share = (DiskShare) session.connectShare(shareName);
+            session = connection.authenticate(ac);
+            share = (DiskShare) session.connectShare(shareName);
 
             String fullPath = normalizePath(relativePath + "/" + filename);
             if (!share.fileExists(fullPath)) {
-                share.close();
-                session.close();
-                connection.close();
                 throw new StorageException("File non trovato su SMB: " + fullPath, null);
             }
 
             Set<AccessMask> accessMask = new HashSet<>(EnumSet.of(AccessMask.GENERIC_READ));
             Set<SMB2ShareAccess> shareAccess = new HashSet<>(EnumSet.of(SMB2ShareAccess.FILE_SHARE_READ));
 
-            File file = share.openFile(fullPath, accessMask, null, shareAccess, SMB2CreateDisposition.FILE_OPEN, null);
+            file = share.openFile(fullPath, accessMask, null, shareAccess, SMB2CreateDisposition.FILE_OPEN, null);
 
-            return new SmbFileInputStream(connection, session, share, file);
+            // Passiamo le risorse allo stream che ne diventerà responsabile
+            SmbFileInputStream stream = new SmbFileInputStream(connection, session, share, file);
+            success = true;
+            return stream;
 
         } catch (Exception e) {
+            if (e instanceof StorageException) {
+                throw (StorageException) e;
+            }
             throw new StorageException("Errore apertura stream SMB", e);
+        } finally {
+            // Resource Leak Fix: Se non siamo arrivati alla creazione dello stream (success=false),
+            // dobbiamo chiudere manualmente tutto ciò che è stato aperto finora.
+            if (!success) {
+                if (file != null) try { file.close(); } catch (Exception ignored) {}
+                if (share != null) try { share.close(); } catch (Exception ignored) {}
+                if (session != null) try { session.close(); } catch (Exception ignored) {}
+                if (connection != null) try { connection.close(); } catch (Exception ignored) {}
+            }
         }
     }
 

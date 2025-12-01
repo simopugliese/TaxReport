@@ -9,9 +9,9 @@ import pugliesesimone.taxreport.storage.StorageInterface;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Optional;
 import java.util.regex.Pattern;
 
 public class TaxReportService {
@@ -30,6 +30,26 @@ public class TaxReportService {
     public void registerExpense(Expense expense, List<Attachment> attachments) {
         List<Document> savedDocuments = new ArrayList<>();
 
+        // FIX 1: Protezione contro perdita dati (Merge dei documenti)
+        // Se stiamo aggiornando una spesa esistente, dobbiamo assicurarci di non perdere
+        // i documenti già salvati nel DB, poiché metadata.save() fa una replace completa.
+        try {
+            Optional<Expense> existing = metadata.findById(expense.getId());
+            if (existing.isPresent()) {
+                for (Document oldDoc : existing.get().getDocuments()) {
+                    // Evita duplicati controllando l'ID
+                    boolean alreadyPresent = expense.getDocuments().stream()
+                            .anyMatch(d -> d.getId().equals(oldDoc.getId()));
+
+                    if (!alreadyPresent) {
+                        expense.addDocument(oldDoc);
+                    }
+                }
+            }
+        } catch (Exception e) {
+            logger.warn("Impossibile recuperare documenti esistenti per merge ID {}. Procedo comunque.", expense.getId(), e);
+        }
+
         String safeDate = sanitize(expense.getRawDate());
         String safeDesc = sanitize(expense.getDescription());
 
@@ -39,12 +59,13 @@ public class TaxReportService {
                 expense.getId().toString()
         );
 
-        String folderPath = Path.of(
+        // Usiamo '/' standard, lo storage si occuperà di convertirlo se serve (es. su Windows)
+        String folderPath = String.join("/",
                 expense.getYear(),
                 expense.getPerson().getFiscalCode(),
                 expense.getExpenseType().name(),
                 leafFolder
-        ).toString();
+        );
 
         try {
             if (!storage.existsFolder(folderPath)) {
@@ -55,13 +76,16 @@ public class TaxReportService {
             }
 
             for (Attachment att : attachments) {
-                String safeFilename = sanitize(att.getOriginalFilename());
+                // FIX 2: Collisione Nomi File
+                // Aggiungiamo timestamp per garantire unicità (es. "Fattura.pdf" caricato 2 volte non si sovrascrive)
+                String sanitizedOriginal = sanitize(att.getOriginalFilename());
+                String uniqueFilename = System.currentTimeMillis() + "_" + sanitizedOriginal;
 
-                if (!storage.saveFile(folderPath, safeFilename, att.getContent())) {
-                    throw new ServiceException("Errore IO salvataggio file: " + safeFilename);
+                if (!storage.saveFile(folderPath, uniqueFilename, att.getContent())) {
+                    throw new ServiceException("Errore IO salvataggio file: " + uniqueFilename);
                 }
 
-                String fullPath = Path.of(folderPath, safeFilename).toString();
+                String fullPath = folderPath + "/" + uniqueFilename;
                 Document doc = new Document(att.getType(), fullPath);
 
                 savedDocuments.add(doc);
@@ -77,6 +101,7 @@ public class TaxReportService {
 
             rollbackFiles(savedDocuments);
 
+            // Pulizia dell'oggetto in memoria in caso di errore
             if (expense.getDocuments() != null) {
                 expense.getDocuments().removeAll(savedDocuments);
             }
@@ -88,9 +113,12 @@ public class TaxReportService {
     private void rollbackFiles(List<Document> documents) {
         for (Document doc : documents) {
             try {
-                Path p = Path.of(doc.getRelativePath());
-                String filename = p.getFileName().toString();
-                String folder = p.getParent() != null ? p.getParent().toString() : "";
+                // Parsing manuale del path per il rollback per essere indipendenti da Path.of
+                String relPath = doc.getRelativePath();
+                int lastSep = Math.max(relPath.lastIndexOf('/'), relPath.lastIndexOf('\\'));
+
+                String folder = (lastSep > 0) ? relPath.substring(0, lastSep) : "";
+                String filename = (lastSep >= 0 && lastSep < relPath.length()) ? relPath.substring(lastSep + 1) : relPath;
 
                 storage.deleteFile(folder, filename);
             } catch (Exception ex) {

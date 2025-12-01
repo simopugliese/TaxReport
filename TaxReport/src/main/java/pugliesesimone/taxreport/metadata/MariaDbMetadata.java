@@ -13,7 +13,8 @@ import java.util.UUID;
 
 public class MariaDbMetadata implements MetadataInterface {
 
-    private static final int MYSQL_FK_CONSTRAINT_VIOLATION = 1452;
+    // SQL State standard per "Integrity Constraint Violation" (es. Foreign Key mancante)
+    private static final String SQL_STATE_INTEGRITY_VIOLATION = "23";
 
     private final String connectionString;
     private final String user;
@@ -27,14 +28,16 @@ public class MariaDbMetadata implements MetadataInterface {
         try {
             Class.forName("org.mariadb.jdbc.Driver");
             initDatabase();
+        } catch (ClassNotFoundException e) {
+            throw new ConfigurationException("Driver MariaDB non trovato nel classpath", e);
         } catch (Exception e) {
-            throw new ConfigurationException("Impossibile connettersi al DB Remoto MariaDB", e);
+            throw new ConfigurationException("Impossibile connettersi o inizializzare il DB MariaDB", e);
         }
     }
 
     /**
      * Ottiene una nuova connessione al Database.
-     * Visibilità 'protected' per consentire l'override nei Unit Test (Pattern: Subclass and Override).
+     * Visibilità 'protected' per consentire l'override nei Unit Test.
      */
     protected Connection getConnection() throws SQLException {
         return DriverManager.getConnection(connectionString, user, password);
@@ -76,7 +79,7 @@ public class MariaDbMetadata implements MetadataInterface {
             """);
 
         } catch (SQLException e) {
-            throw new StorageException("Errore DDL Database", e);
+            throw new StorageException("Errore DDL Database: impossibile creare le tabelle", e);
         }
     }
 
@@ -108,12 +111,16 @@ public class MariaDbMetadata implements MetadataInterface {
             } catch (SQLException e) {
                 try { conn.rollback(); } catch (SQLException ex) { /* Log */ }
 
-                if (e.getErrorCode() == MYSQL_FK_CONSTRAINT_VIOLATION) {
+                // Controllo robusto usando SQLState invece di Error Code specifico
+                String state = e.getSQLState();
+                if (state != null && state.startsWith(SQL_STATE_INTEGRITY_VIOLATION)) {
                     throw new PersonNotFoundException("Persona non trovata (FK violation): " + expense.getPerson().getId());
                 }
                 throw e;
             }
 
+            // Nota: Questa operazione cancella i documenti precedenti.
+            // Assicurarsi che l'oggetto Expense contenga SEMPRE la lista completa dei documenti.
             try (PreparedStatement ps = conn.prepareStatement(sqlDeleteDocs)) {
                 ps.setString(1, expense.getId().toString());
                 ps.executeUpdate();
@@ -141,7 +148,7 @@ public class MariaDbMetadata implements MetadataInterface {
             conn.commit();
 
         } catch (SQLException e) {
-            throw new StorageException("Errore save su MariaDB", e);
+            throw new StorageException("Errore save su MariaDB per spesa: " + expense.getId(), e);
         }
     }
 
