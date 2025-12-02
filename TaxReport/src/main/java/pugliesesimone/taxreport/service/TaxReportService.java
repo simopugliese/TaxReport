@@ -27,6 +27,10 @@ public class TaxReportService {
         this.metadata = metadata;
     }
 
+    public MetadataInterface getMetadata() {
+        return metadata;
+    }
+
     // --- Metodi Anagrafica ---
     public void registerPerson(Person person) {
         try {
