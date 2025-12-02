@@ -212,7 +212,12 @@ public class SQLiteMetadata implements MetadataInterface {
     }
 
     @Override
+    public List<Person> findAllPersons() {
+        return List.of(); //todo
+    }
+
+    @Override
     public List<Expense> findByYear(String year) {
-        return List.of();
+        return List.of(); //todo
     }
 }

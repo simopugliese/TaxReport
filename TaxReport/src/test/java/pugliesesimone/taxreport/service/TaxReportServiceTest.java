@@ -13,6 +13,7 @@ import pugliesesimone.taxreport.model.*;
 import pugliesesimone.taxreport.storage.StorageInterface;
 
 import java.io.ByteArrayInputStream;
+import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Optional;
 
@@ -36,6 +37,14 @@ class TaxReportServiceTest {
         // Setup dati di prova
         Person person = new Person("Mario Rossi", "RSSMRA80A01H501U");
         sampleExpense = new Expense("2024", person, ExpenseType.VISITA_MEDICA, "Visita Occhi", "10/01/2024");
+
+        // --- MOCK PER RULE ENGINE ---
+        // 1. Simuliamo che la cartella config esista per evitare chiamate extra a createFolder
+        lenient().when(storage.existsFolder("config")).thenReturn(true);
+
+        // 2. Forniamo un JSON valido vuoto per evitare crash durante la validazione automatica
+        lenient().when(storage.loadFile(eq("config"), anyString()))
+                .thenReturn(new ByteArrayInputStream("{}".getBytes(StandardCharsets.UTF_8)));
     }
 
     @Test
@@ -44,7 +53,7 @@ class TaxReportServiceTest {
         Attachment att = new Attachment(DocumentType.FATTURA, "fattura.pdf", new ByteArrayInputStream(new byte[0]));
         when(storage.createFolder(anyString())).thenReturn(true);
         when(storage.saveFile(anyString(), anyString(), any())).thenReturn(true);
-        // Simuliamo che non esistano spese precedenti per evitare null pointer o warning nel log del merge
+
         lenient().when(metadata.findById(any())).thenReturn(Optional.empty());
 
         // Act
@@ -60,11 +69,12 @@ class TaxReportServiceTest {
         assertTrue(path.contains("RSSMRA80A01H501U"));
 
         // 2. Verifica salvataggio file
-        // FIX: Usiamo endsWith per ignorare il timestamp prefix aggiunto dal service
         verify(storage).saveFile(eq(path), endsWith("_fattura.pdf"), any());
 
         // 3. Verifica salvataggio su DB
-        verify(metadata).save(sampleExpense);
+        // FIX: Usiamo atLeastOnce() perché ora il service salva due volte:
+        // una volta per la creazione iniziale e una per l'aggiornamento automatico dello stato (Compliance)
+        verify(metadata, atLeastOnce()).save(sampleExpense);
     }
 
     @Test
@@ -74,7 +84,10 @@ class TaxReportServiceTest {
 
         when(storage.createFolder(anyString())).thenReturn(true);
         when(storage.saveFile(anyString(), anyString(), any())).thenReturn(true);
+
+        // Simuliamo il fallimento del DB
         doThrow(new PersonNotFoundException("Persona non esiste")).when(metadata).save(any());
+
         lenient().when(metadata.findById(any())).thenReturn(Optional.empty());
 
         // Act & Assert
@@ -83,7 +96,6 @@ class TaxReportServiceTest {
         });
 
         // Verify Rollback
-        // FIX: Usiamo endsWith anche qui per intercettare il file timestampato
         verify(storage).deleteFile(anyString(), endsWith("_scontrino.jpg"));
     }
 
@@ -97,6 +109,7 @@ class TaxReportServiceTest {
 
         when(storage.createFolder(anyString())).thenReturn(true);
         when(storage.saveFile(anyString(), anyString(), any())).thenReturn(true);
+
         lenient().when(metadata.findById(any())).thenReturn(Optional.empty());
 
         // Act
@@ -109,7 +122,6 @@ class TaxReportServiceTest {
         String path = pathCaptor.getValue();
         assertTrue(path.contains("Pagamento_Università"));
 
-        // FIX: endsWith per gestire il timestamp
         verify(storage).saveFile(anyString(), endsWith("_caffè.pdf"), any());
     }
 }

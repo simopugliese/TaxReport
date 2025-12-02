@@ -97,6 +97,27 @@ public class MariaDbMetadata implements MetadataInterface {
     }
 
     @Override
+    public List<Person> findAllPersons() {
+        List<Person> persons = new ArrayList<>();
+        String sql = "SELECT * FROM persons ORDER BY name ASC";
+        try (Connection conn = getConnection();
+             Statement stmt = conn.createStatement();
+             ResultSet rs = stmt.executeQuery(sql)) {
+
+            while (rs.next()) {
+                persons.add(new Person(
+                        UUID.fromString(rs.getString("id")),
+                        rs.getString("name"),
+                        rs.getString("fiscal_code")
+                ));
+            }
+        } catch (SQLException e) {
+            throw new StorageException("Errore caricamento persone", e);
+        }
+        return persons;
+    }
+
+    @Override
     public void save(Expense expense) {
         String sqlExpense = """
             INSERT INTO expenses (id, year, person_id, type, description, raw_date, state)

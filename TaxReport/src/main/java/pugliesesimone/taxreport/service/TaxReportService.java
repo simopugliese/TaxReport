@@ -9,11 +9,11 @@ import pugliesesimone.taxreport.storage.StorageInterface;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.io.File;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 import java.util.regex.Pattern;
-import java.util.stream.Collectors;
 
 public class TaxReportService {
     private static final Logger logger = LoggerFactory.getLogger(TaxReportService.class);
@@ -37,28 +37,23 @@ public class TaxReportService {
         }
     }
 
-    // --- Metodi Report & Compliance ---
+    public List<Person> getAllPersons() {
+        return metadata.findAllPersons();
+    }
 
-    /**
-     * Esegue il controllo di conformità su tutte le spese di un dato anno.
-     * Aggiorna lo stato nel DB e restituisce un riepilogo testuale.
-     */
+    // --- Metodi Report & Compliance ---
     public String runComplianceCheck(String year) {
         try {
-            // 1. Setup Motore Regole (on-the-fly)
             RuleEngine ruleEngine = new RuleEngine(storage);
             ComplianceService complianceService = new ComplianceService(metadata, ruleEngine);
 
-            // 2. Recupera Spese
             List<Expense> expenses = metadata.findByYear(year);
             if (expenses.isEmpty()) {
                 return "Nessuna spesa trovata per l'anno " + year;
             }
 
-            // 3. Esegui Validazione (aggiorna gli stati nel DB)
             complianceService.validateAndUpdateStatus(expenses);
 
-            // 4. Calcola Statistiche
             long completed = expenses.stream().filter(e -> e.getExpenseState() == ExpenseState.COMPLETED).count();
             long partial = expenses.stream().filter(e -> e.getExpenseState() == ExpenseState.PARTIAL).count();
             long initial = expenses.stream().filter(e -> e.getExpenseState() == ExpenseState.INITIAL).count();
@@ -82,20 +77,35 @@ public class TaxReportService {
     public void registerExpense(Expense expense, List<Attachment> attachments) {
         List<Document> savedDocuments = new ArrayList<>();
 
-        // Merge documenti esistenti
+        // 1. GESTIONE CANCELLAZIONE FILE (Fix Bug File Fantasma)
         try {
-            Optional<Expense> existing = metadata.findById(expense.getId());
-            if (existing.isPresent()) {
-                for (Document oldDoc : existing.get().getDocuments()) {
-                    boolean alreadyPresent = expense.getDocuments().stream()
-                            .anyMatch(d -> d.getId().equals(oldDoc.getId()));
-                    if (!alreadyPresent) expense.addDocument(oldDoc);
+            Optional<Expense> existingOpt = metadata.findById(expense.getId());
+            if (existingOpt.isPresent()) {
+                Expense existing = existingOpt.get();
+
+                // Troviamo i documenti che erano nel DB ma NON sono più nell'oggetto expense passato dalla GUI
+                List<Document> toRemove = existing.getDocuments().stream()
+                        .filter(oldDoc -> expense.getDocuments().stream()
+                                .noneMatch(newDoc -> newDoc.getId().equals(oldDoc.getId())))
+                        .toList();
+
+                // Cancelliamo fisicamente i file rimossi
+                for (Document doc : toRemove) {
+                    File f = new File(doc.getRelativePath());
+                    String folder = f.getParent();
+                    if (folder == null) folder = "";
+                    // Se siamo su SMB/Windows assicuriamoci che i path separator siano gestiti
+                    // Ma File(path).getParent() dovrebbe gestire bene
+
+                    storage.deleteFile(folder, f.getName());
+                    logger.info("File eliminato fisicamente: {}", doc.getRelativePath());
                 }
             }
         } catch (Exception e) {
-            logger.warn("Merge fallito per ID {}. Procedo.", expense.getId(), e);
+            logger.warn("Errore durante pulizia vecchi file: {}", e.getMessage());
         }
 
+        // 2. SALVATAGGIO NUOVI FILE
         String safeDate = sanitize(expense.getRawDate());
         String safeDesc = sanitize(expense.getDescription());
         String leafFolder = String.format("%s_%s_%s", safeDate, safeDesc.isEmpty() ? "NoDesc" : safeDesc, expense.getId());
@@ -123,6 +133,15 @@ public class TaxReportService {
             metadata.save(expense);
             logger.info("Spesa {} salvata in: {}", expense.getId(), folderPath);
 
+            // 3. FIX: ESEGUI SUBITO IL COMPLIANCE CHECK
+            try {
+                RuleEngine ruleEngine = new RuleEngine(storage);
+                ComplianceService compliance = new ComplianceService(metadata, ruleEngine);
+                compliance.validateAndUpdateStatus(List.of(expense));
+            } catch (Exception e) {
+                logger.error("Impossibile validare la spesa dopo il salvataggio", e);
+            }
+
         } catch (Exception e) {
             logger.error("Rollback per spesa {}", expense.getId(), e);
             rollbackFiles(savedDocuments);
@@ -134,10 +153,8 @@ public class TaxReportService {
         for (Document doc : documents) {
             try {
                 String relPath = doc.getRelativePath();
-                int lastSep = Math.max(relPath.lastIndexOf('/'), relPath.lastIndexOf('\\'));
-                String folder = (lastSep > 0) ? relPath.substring(0, lastSep) : "";
-                String filename = (lastSep >= 0 && lastSep < relPath.length()) ? relPath.substring(lastSep + 1) : relPath;
-                storage.deleteFile(folder, filename);
+                File f = new File(relPath);
+                storage.deleteFile(f.getParent(), f.getName());
             } catch (Exception ex) {
                 logger.warn("Rollback parziale fallito: {}", doc.getRelativePath());
             }
