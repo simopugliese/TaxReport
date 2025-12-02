@@ -53,7 +53,7 @@ class ComplianceServiceTest {
     void checkCompliance_ShouldBeFalse_WhenDocMissing() {
         // Arrange: Regola vuole FATTURA + RICETTA
         when(ruleEngine.getMandatoryDocuments("2024", ExpenseType.VISITA_MEDICA))
-                .thenReturn(List.of(DocumentType.FATTURA, DocumentType.RICETTA_MEDICA));
+                .thenReturn(List.of(DocumentType.FATTURA, DocumentType.PRESCRIZIONE_MEDICA));
 
         // Expense ha SOLO FATTURA
         expense.addDocument(new Document(DocumentType.FATTURA, "path/f.pdf"));
@@ -64,7 +64,7 @@ class ComplianceServiceTest {
         // Assert
         assertFalse(res.isCompliant());
         assertEquals(1, res.getMissingDocuments().size());
-        assertEquals(DocumentType.RICETTA_MEDICA, res.getMissingDocuments().get(0));
+        assertEquals(DocumentType.PRESCRIZIONE_MEDICA, res.getMissingDocuments().get(0));
     }
 
     @Test

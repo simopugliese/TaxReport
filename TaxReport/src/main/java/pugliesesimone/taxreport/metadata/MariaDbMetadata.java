@@ -99,9 +99,16 @@ public class MariaDbMetadata implements MetadataInterface {
     @Override
     public void save(Expense expense) {
         String sqlExpense = """
-            REPLACE INTO expenses
-            (id, year, person_id, type, description, raw_date, state)
-            VALUES (?, ?, ?, ?, ?, ?, ?)""";
+            INSERT INTO expenses (id, year, person_id, type, description, raw_date, state)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            ON DUPLICATE KEY UPDATE
+                year = VALUES(year),
+                person_id = VALUES(person_id),
+                type = VALUES(type),
+                description = VALUES(description),
+                raw_date = VALUES(raw_date),
+                state = VALUES(state)
+            """;
 
         String sqlDeleteDocs = "DELETE FROM documents WHERE expense_id = ?";
 

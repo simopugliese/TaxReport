@@ -42,7 +42,7 @@ class ExpenseTest {
         Expense e = new Expense("2024", p, ExpenseType.VISITA_MEDICA, "Desc", "01/01/2024");
 
         Document doc1 = new Document(DocumentType.FATTURA, "a.pdf");
-        Document doc2 = new Document(DocumentType.RICETTA_MEDICA, "b.pdf");
+        Document doc2 = new Document(DocumentType.PRESCRIZIONE_MEDICA, "b.pdf");
 
         e.addDocument(doc1);
         e.addDocument(doc2);

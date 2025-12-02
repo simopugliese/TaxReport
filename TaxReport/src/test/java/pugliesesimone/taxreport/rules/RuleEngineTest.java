@@ -52,7 +52,7 @@ class RuleEngineTest {
         assertNotNull(docs);
         assertEquals(2, docs.size());
         assertTrue(docs.contains(DocumentType.FATTURA));
-        assertTrue(docs.contains(DocumentType.RICETTA_MEDICA));
+        assertTrue(docs.contains(DocumentType.PRESCRIZIONE_MEDICA));
     }
 
     @Test
