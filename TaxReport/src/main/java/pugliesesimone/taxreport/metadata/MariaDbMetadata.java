@@ -13,7 +13,6 @@ import java.util.UUID;
 
 public class MariaDbMetadata implements MetadataInterface {
 
-    // SQL State standard per "Integrity Constraint Violation" (es. Foreign Key mancante)
     private static final String SQL_STATE_INTEGRITY_VIOLATION = "23";
 
     private final String connectionString;
@@ -35,10 +34,6 @@ public class MariaDbMetadata implements MetadataInterface {
         }
     }
 
-    /**
-     * Ottiene una nuova connessione al Database.
-     * Visibilità 'protected' per consentire l'override nei Unit Test.
-     */
     protected Connection getConnection() throws SQLException {
         return DriverManager.getConnection(connectionString, user, password);
     }
@@ -79,7 +74,25 @@ public class MariaDbMetadata implements MetadataInterface {
             """);
 
         } catch (SQLException e) {
-            throw new StorageException("Errore DDL Database: impossibile creare le tabelle", e);
+            throw new StorageException("Errore DDL Database", e);
+        }
+    }
+
+    @Override
+    public void savePerson(Person person) {
+        String sql = "INSERT INTO persons (id, name, fiscal_code) VALUES (?, ?, ?) " +
+                "ON DUPLICATE KEY UPDATE name = VALUES(name), fiscal_code = VALUES(fiscal_code)";
+
+        try (Connection conn = getConnection();
+             PreparedStatement ps = conn.prepareStatement(sql)) {
+
+            ps.setString(1, person.getId().toString());
+            ps.setString(2, person.getName());
+            ps.setString(3, person.getFiscalCode());
+            ps.executeUpdate();
+
+        } catch (SQLException e) {
+            throw new StorageException("Errore salvataggio persona: " + person.getName(), e);
         }
     }
 
@@ -110,8 +123,6 @@ public class MariaDbMetadata implements MetadataInterface {
                 ps.executeUpdate();
             } catch (SQLException e) {
                 try { conn.rollback(); } catch (SQLException ex) { /* Log */ }
-
-                // Controllo robusto usando SQLState invece di Error Code specifico
                 String state = e.getSQLState();
                 if (state != null && state.startsWith(SQL_STATE_INTEGRITY_VIOLATION)) {
                     throw new PersonNotFoundException("Persona non trovata (FK violation): " + expense.getPerson().getId());
@@ -119,8 +130,6 @@ public class MariaDbMetadata implements MetadataInterface {
                 throw e;
             }
 
-            // Nota: Questa operazione cancella i documenti precedenti.
-            // Assicurarsi che l'oggetto Expense contenga SEMPRE la lista completa dei documenti.
             try (PreparedStatement ps = conn.prepareStatement(sqlDeleteDocs)) {
                 ps.setString(1, expense.getId().toString());
                 ps.executeUpdate();
@@ -148,67 +157,95 @@ public class MariaDbMetadata implements MetadataInterface {
             conn.commit();
 
         } catch (SQLException e) {
-            throw new StorageException("Errore save su MariaDB per spesa: " + expense.getId(), e);
+            throw new StorageException("Errore save su MariaDB", e);
         }
     }
 
     @Override
     public Optional<Expense> findById(UUID id) {
-        String sqlExpense = """
+        String sql = """
             SELECT e.*, p.name as person_name, p.fiscal_code as person_fc
             FROM expenses e
             JOIN persons p ON e.person_id = p.id
             WHERE e.id = ?""";
 
-        String sqlDocs = "SELECT * FROM documents WHERE expense_id = ?";
-
-        Expense expense = null;
-
-        try (Connection conn = getConnection()) {
-            try (PreparedStatement ps = conn.prepareStatement(sqlExpense)) {
-                ps.setString(1, id.toString());
-                try (ResultSet rs = ps.executeQuery()) {
-                    if (rs.next()) {
-                        Person person = new Person(
-                                UUID.fromString(rs.getString("person_id")),
-                                rs.getString("person_name"),
-                                rs.getString("person_fc")
-                        );
-
-                        expense = new Expense(
-                                UUID.fromString(rs.getString("id")),
-                                rs.getString("year"),
-                                person,
-                                ExpenseType.valueOf(rs.getString("type")),
-                                rs.getString("description"),
-                                rs.getString("raw_date"),
-                                ExpenseState.valueOf(rs.getString("state"))
-                        );
-                    } else {
-                        return Optional.empty();
-                    }
+        try (Connection conn = getConnection();
+             PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setString(1, id.toString());
+            try (ResultSet rs = ps.executeQuery()) {
+                if (rs.next()) {
+                    Expense e = mapRowToExpense(rs);
+                    loadDocumentsForExpense(conn, e);
+                    return Optional.of(e);
                 }
             }
-
-            List<Document> docs = new ArrayList<>();
-            try (PreparedStatement ps = conn.prepareStatement(sqlDocs)) {
-                ps.setString(1, id.toString());
-                try (ResultSet rs = ps.executeQuery()) {
-                    while (rs.next()) {
-                        Document doc = new Document(
-                                UUID.fromString(rs.getString("id")),
-                                DocumentType.valueOf(rs.getString("doc_type")),
-                                rs.getString("relative_path")
-                        );
-                        docs.add(doc);
-                    }
-                }
-            }
-            expense.setDocuments(docs);
-            return Optional.of(expense);
-
         } catch (SQLException e) {
-            throw new StorageException("Errore lettura spesa da MariaDB: " + id, e);
+            throw new StorageException("Errore findById", e);
         }
+        return Optional.empty();
+    }
+
+    // NUOVO: Implementazione findByYear
+    @Override
+    public List<Expense> findByYear(String year) {
+        List<Expense> expenses = new ArrayList<>();
+        String sql = """
+            SELECT e.*, p.name as person_name, p.fiscal_code as person_fc
+            FROM expenses e
+            JOIN persons p ON e.person_id = p.id
+            WHERE e.year = ?""";
+
+        try (Connection conn = getConnection();
+             PreparedStatement ps = conn.prepareStatement(sql)) {
+
+            ps.setString(1, year);
+
+            try (ResultSet rs = ps.executeQuery()) {
+                while (rs.next()) {
+                    Expense e = mapRowToExpense(rs);
+                    loadDocumentsForExpense(conn, e); // Carica i documenti per ogni spesa
+                    expenses.add(e);
+                }
+            }
+        } catch (SQLException e) {
+            throw new StorageException("Errore ricerca spese per anno: " + year, e);
+        }
+        return expenses;
+    }
+
+    // Helpers per evitare duplicazione codice
+    private Expense mapRowToExpense(ResultSet rs) throws SQLException {
+        Person person = new Person(
+                UUID.fromString(rs.getString("person_id")),
+                rs.getString("person_name"),
+                rs.getString("person_fc")
+        );
+        return new Expense(
+                UUID.fromString(rs.getString("id")),
+                rs.getString("year"),
+                person,
+                ExpenseType.valueOf(rs.getString("type")),
+                rs.getString("description"),
+                rs.getString("raw_date"),
+                ExpenseState.valueOf(rs.getString("state"))
+        );
+    }
+
+    private void loadDocumentsForExpense(Connection conn, Expense expense) throws SQLException {
+        String sql = "SELECT * FROM documents WHERE expense_id = ?";
+        List<Document> docs = new ArrayList<>();
+        try (PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setString(1, expense.getId().toString());
+            try (ResultSet rs = ps.executeQuery()) {
+                while (rs.next()) {
+                    docs.add(new Document(
+                            UUID.fromString(rs.getString("id")),
+                            DocumentType.valueOf(rs.getString("doc_type")),
+                            rs.getString("relative_path")
+                    ));
+                }
+            }
+        }
+        expense.setDocuments(docs);
     }
 }

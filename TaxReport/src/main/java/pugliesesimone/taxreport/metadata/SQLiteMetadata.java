@@ -205,4 +205,14 @@ public class SQLiteMetadata implements MetadataInterface {
             throw new StorageException("Errore caricamento spesa: " + id, e);
         }
     }
+
+    @Override
+    public void savePerson(Person person) {
+        return; //todo
+    }
+
+    @Override
+    public List<Expense> findByYear(String year) {
+        return List.of();
+    }
 }
