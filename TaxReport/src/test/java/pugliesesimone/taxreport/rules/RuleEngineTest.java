@@ -38,7 +38,7 @@ class RuleEngineTest {
         // Arrange: Simuliamo un JSON valido nello storage
         String jsonContent = """
                 {
-                  "VISITA_MEDICA": ["FATTURA", "RICETTA_MEDICA"],
+                  "VISITA_MEDICA": ["FATTURA", "PRESCRIZIONE_MEDICA"],
                   "PAGAMENTO_UNIVERSITARIO": ["RICEVUTA_PAGAMENTO"]
                 }
                 """;
@@ -53,6 +53,7 @@ class RuleEngineTest {
         assertEquals(2, docs.size());
         assertTrue(docs.contains(DocumentType.FATTURA));
         assertTrue(docs.contains(DocumentType.PRESCRIZIONE_MEDICA));
+
     }
 
     @Test
