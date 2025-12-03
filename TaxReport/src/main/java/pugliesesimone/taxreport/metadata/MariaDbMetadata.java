@@ -1,5 +1,7 @@
 package pugliesesimone.taxreport.metadata;
 
+import com.zaxxer.hikari.HikariConfig;
+import com.zaxxer.hikari.HikariDataSource;
 import pugliesesimone.taxreport.exception.ConfigurationException;
 import pugliesesimone.taxreport.exception.PersonNotFoundException;
 import pugliesesimone.taxreport.exception.StorageException;
@@ -9,31 +11,52 @@ import java.sql.*;
 import java.util.*;
 import java.util.UUID;
 
-public class MariaDbMetadata implements MetadataInterface {
+public class MariaDbMetadata implements MetadataInterface, AutoCloseable {
 
     private static final String SQL_STATE_INTEGRITY_VIOLATION = "23";
-
-    private final String connectionString;
-    private final String user;
-    private final String password;
+    private final HikariDataSource dataSource;
 
     public MariaDbMetadata(String hostname, int port, String dbName, String user, String password) {
-        this.connectionString = String.format("jdbc:mariadb://%s:%d/%s", hostname, port, dbName);
-        this.user = user;
-        this.password = password;
-
         try {
-            Class.forName("org.mariadb.jdbc.Driver");
+            HikariConfig config = new HikariConfig();
+            config.setJdbcUrl(String.format("jdbc:mariadb://%s:%d/%s", hostname, port, dbName));
+            config.setUsername(user);
+            config.setPassword(password);
+            config.setDriverClassName("org.mariadb.jdbc.Driver");
+
+            // Tuning per performance e stabilità
+            config.setMaximumPoolSize(10);
+            config.setMinimumIdle(2);
+            config.setIdleTimeout(60000);
+            config.setConnectionTimeout(5000);
+            config.setPoolName("TaxReportPool");
+
+            this.dataSource = new HikariDataSource(config);
             initDatabase();
-        } catch (ClassNotFoundException e) {
-            throw new ConfigurationException("Driver MariaDB non trovato nel classpath", e);
         } catch (Exception e) {
-            throw new ConfigurationException("Impossibile connettersi o inizializzare il DB MariaDB", e);
+            throw new ConfigurationException("Impossibile inizializzare HikariCP Pool", e);
         }
     }
 
+    /**
+     * Costruttore protetto per il TESTING (Mocking).
+     * Evita l'inizializzazione di HikariCP durante i test unitari.
+     */
+    protected MariaDbMetadata() {
+        this.dataSource = null;
+    }
+
+    // Protected per permettere l'override nei test
     protected Connection getConnection() throws SQLException {
-        return DriverManager.getConnection(connectionString, user, password);
+        if (dataSource == null) throw new SQLException("DataSource non inizializzato (Testing Mode)");
+        return dataSource.getConnection();
+    }
+
+    @Override
+    public void close() {
+        if (dataSource != null && !dataSource.isClosed()) {
+            dataSource.close();
+        }
     }
 
     private void initDatabase() {
@@ -211,11 +234,8 @@ public class MariaDbMetadata implements MetadataInterface {
         return Optional.empty();
     }
 
-    // [OPTIMIZED] Risolto problema N+1 con una singola query JOIN
     @Override
     public List<Expense> findByYear(String year) {
-        // Usiamo una mappa per raggruppare i documenti sotto la stessa spesa
-        // LinkedHashMap mantiene l'ordine di inserimento (quindi quello della query)
         Map<UUID, Expense> expenseMap = new LinkedHashMap<>();
 
         String sql = """
@@ -239,7 +259,6 @@ public class MariaDbMetadata implements MetadataInterface {
                 while (rs.next()) {
                     UUID expenseId = UUID.fromString(rs.getString("e_id"));
 
-                    // Se la spesa è già nella mappa, usala; altrimenti creala
                     Expense expense = expenseMap.computeIfAbsent(expenseId, k -> {
                         try {
                             Person person = new Person(
@@ -261,7 +280,6 @@ public class MariaDbMetadata implements MetadataInterface {
                         }
                     });
 
-                    // Se c'è un documento (LEFT JOIN non nullo), aggiungilo
                     String docIdStr = rs.getString("d_id");
                     if (docIdStr != null) {
                         Document doc = new Document(
@@ -302,7 +320,6 @@ public class MariaDbMetadata implements MetadataInterface {
         return years;
     }
 
-    // Helper usati da findById (rimasti per compatibilità)
     private Expense mapRowToExpense(ResultSet rs) throws SQLException {
         Person person = new Person(
                 UUID.fromString(rs.getString("person_id")),

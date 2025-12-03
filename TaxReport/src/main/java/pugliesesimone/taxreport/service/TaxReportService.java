@@ -13,6 +13,8 @@ import java.io.File;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.Executors;
 import java.util.regex.Pattern;
 
 public class TaxReportService {
@@ -35,7 +37,6 @@ public class TaxReportService {
         return storage;
     }
 
-    // --- Metodi Anagrafica ---
     public void registerPerson(Person person) {
         try {
             metadata.savePerson(person);
@@ -49,9 +50,11 @@ public class TaxReportService {
         return metadata.findAllPersons();
     }
 
-    // --- Metodi Report & Compliance ---
     public String runComplianceCheck(String year) {
         try {
+            logger.info("Avvio Compliance Check parallelo per anno {}", year);
+
+            // 1. Instanziamo i servizi una volta sola (stateless o cache interna)
             RuleEngine ruleEngine = new RuleEngine(storage);
             ComplianceService complianceService = new ComplianceService(metadata, ruleEngine);
 
@@ -60,7 +63,22 @@ public class TaxReportService {
                 return "Nessuna spesa trovata per l'anno " + year;
             }
 
-            complianceService.validateAndUpdateStatus(expenses);
+            // 2. PARALLEL PROCESSING (Java 21 Virtual Threads)
+            // Usiamo virtual threads perché il task è IO-bound (DB + SMB)
+            try (var executor = Executors.newVirtualThreadPerTaskExecutor()) {
+                List<CompletableFuture<Void>> futures = expenses.stream()
+                        .map(exp -> CompletableFuture.runAsync(() -> {
+                            try {
+                                complianceService.validateAndUpdateStatus(List.of(exp));
+                            } catch (Exception e) {
+                                logger.error("Errore check parallelo su spesa {}", exp.getId(), e);
+                            }
+                        }, executor))
+                        .toList();
+
+                // Aspetta che tutti finiscano
+                CompletableFuture.allOf(futures.toArray(new CompletableFuture[0])).join();
+            }
 
             long completed = expenses.stream().filter(e -> e.getExpenseState() == ExpenseState.COMPLETED).count();
             long partial = expenses.stream().filter(e -> e.getExpenseState() == ExpenseState.PARTIAL).count();
@@ -81,39 +99,32 @@ public class TaxReportService {
         }
     }
 
-    // --- Metodi Core Spesa ---
     public void registerExpense(Expense expense, List<Attachment> attachments) {
         List<Document> savedDocuments = new ArrayList<>();
 
-        // 1. GESTIONE CANCELLAZIONE FILE (Fix Bug File Fantasma)
         try {
             Optional<Expense> existingOpt = metadata.findById(expense.getId());
             if (existingOpt.isPresent()) {
                 Expense existing = existingOpt.get();
-
-                // Troviamo i documenti che erano nel DB ma NON sono più nell'oggetto expense passato dalla GUI
                 List<Document> toRemove = existing.getDocuments().stream()
                         .filter(oldDoc -> expense.getDocuments().stream()
                                 .noneMatch(newDoc -> newDoc.getId().equals(oldDoc.getId())))
                         .toList();
 
-                // Cancelliamo fisicamente i file rimossi
                 for (Document doc : toRemove) {
-                    File f = new File(doc.getRelativePath());
-                    String folder = f.getParent();
-                    if (folder == null) folder = "";
-                    // Se siamo su SMB/Windows assicuriamoci che i path separator siano gestiti
-                    // Ma File(path).getParent() dovrebbe gestire bene
-
-                    storage.deleteFile(folder, f.getName());
-                    logger.info("File eliminato fisicamente: {}", doc.getRelativePath());
+                    try {
+                        File f = new File(doc.getRelativePath());
+                        String folder = f.getParent() == null ? "" : f.getParent();
+                        storage.deleteFile(folder, f.getName());
+                    } catch (Exception ex) {
+                        logger.warn("Impossibile eliminare file orfano: {}", doc.getRelativePath());
+                    }
                 }
             }
         } catch (Exception e) {
-            logger.warn("Errore durante pulizia vecchi file: {}", e.getMessage());
+            logger.warn("Errore pulizia pre-save: {}", e.getMessage());
         }
 
-        // 2. SALVATAGGIO NUOVI FILE
         String safeDate = sanitize(expense.getRawDate());
         String safeDesc = sanitize(expense.getDescription());
         String leafFolder = String.format("%s_%s_%s", safeDate, safeDesc.isEmpty() ? "NoDesc" : safeDesc, expense.getId());
@@ -135,13 +146,11 @@ public class TaxReportService {
                 savedDocuments.add(new Document(att.getType(), fullPath));
             }
 
-            // Aggiungi i nuovi documenti all'oggetto spesa
             savedDocuments.forEach(expense::addDocument);
-
             metadata.save(expense);
             logger.info("Spesa {} salvata in: {}", expense.getId(), folderPath);
 
-            // 3. FIX: ESEGUI SUBITO IL COMPLIANCE CHECK
+            // Async validation post-save
             try {
                 RuleEngine ruleEngine = new RuleEngine(storage);
                 ComplianceService compliance = new ComplianceService(metadata, ruleEngine);

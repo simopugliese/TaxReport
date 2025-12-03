@@ -16,8 +16,9 @@ import java.io.InputStream;
 import java.util.EnumSet;
 import java.util.HashSet;
 import java.util.Set;
+import java.util.concurrent.locks.ReentrantLock;
 
-public class SmbStorage implements StorageInterface {
+public class SmbStorage implements StorageInterface, AutoCloseable {
 
     private static final int BUFFER_SIZE = 8192;
 
@@ -26,33 +27,85 @@ public class SmbStorage implements StorageInterface {
     private final AuthenticationContext auth;
     private final SMBClient client;
 
+    // Connection caching
+    private Connection cachedConnection;
+    private Session cachedSession;
+    private DiskShare cachedShare;
+    private final ReentrantLock lock = new ReentrantLock();
+
     public SmbStorage(String hostname, String shareName, String username, String password) {
         this.hostname = hostname;
         this.shareName = shareName;
         this.auth = new AuthenticationContext(username, password.toCharArray(), null);
-        this.client = new SMBClient();
+        this.client = new SMBClient(); // Config default
+    }
+
+    // Lazy initialization & Reconnection Logic
+    private DiskShare getShare() {
+        lock.lock();
+        try {
+            if (cachedConnection == null || !cachedConnection.isConnected()) {
+                closeResources();
+                cachedConnection = client.connect(hostname);
+                cachedSession = cachedConnection.authenticate(auth);
+                cachedShare = (DiskShare) cachedSession.connectShare(shareName);
+            }
+            return cachedShare;
+        } catch (Exception e) {
+            closeResources(); // Cleanup parziale se fallisce
+            throw new StorageException("Errore connessione SMB a " + hostname, e);
+        } finally {
+            lock.unlock();
+        }
+    }
+
+    private void closeResources() {
+        try { if (cachedShare != null) cachedShare.close(); } catch (Exception ignored) {}
+        try { if (cachedSession != null) cachedSession.close(); } catch (Exception ignored) {}
+        try { if (cachedConnection != null) cachedConnection.close(); } catch (Exception ignored) {}
+        cachedShare = null;
+        cachedSession = null;
+        cachedConnection = null;
+    }
+
+    @Override
+    public void close() {
+        lock.lock();
+        try {
+            closeResources();
+        } finally {
+            lock.unlock();
+        }
     }
 
     @Override
     public boolean createFolder(String relativePath) {
-        return execute(share -> {
+        try {
+            DiskShare share = getShare();
             String path = normalizePath(relativePath);
             if (share.folderExists(path)) {
                 return false;
             }
             mkdirs(share, path);
             return true;
-        });
+        } catch (Exception e) {
+            throw new StorageException("Errore createFolder SMB", e);
+        }
     }
 
     @Override
     public boolean existsFolder(String relativePath) {
-        return execute(share -> share.folderExists(normalizePath(relativePath)));
+        try {
+            return getShare().folderExists(normalizePath(relativePath));
+        } catch (Exception e) {
+            throw new StorageException("Errore existsFolder SMB", e);
+        }
     }
 
     @Override
     public boolean saveFile(String relativePath, String filename, InputStream inputStream) {
-        return execute(share -> {
+        try {
+            DiskShare share = getShare();
             String fullPath = normalizePath(relativePath + "/" + filename);
 
             if (!share.folderExists(normalizePath(relativePath))) {
@@ -76,53 +129,76 @@ public class SmbStorage implements StorageInterface {
                 }
                 return true;
             }
-        });
+        } catch (Exception e) {
+            throw new StorageException("Errore saveFile SMB", e);
+        }
     }
 
     @Override
     public InputStream loadFile(String relativePath, String filename) {
-        Connection connection = null;
-        Session session = null;
-        DiskShare share = null;
-        File file = null;
-        boolean success = false;
-
         try {
-            connection = client.connect(hostname);
-            AuthenticationContext ac = new AuthenticationContext(auth.getUsername(), auth.getPassword(), auth.getDomain());
-            session = connection.authenticate(ac);
-            share = (DiskShare) session.connectShare(shareName);
+            // Nota: Non usiamo 'getShare()' qui perché dobbiamo aprire uno stream
+            // che vivrà più a lungo di questo metodo.
+            // Per evitare problemi di concorrenza complessi sugli stream aperti,
+            // apriamo una connessione dedicata SOLO per la lettura (pattern Read-Isolated).
+            // Se le performance di lettura sono un problema, si può implementare un pool di connessioni,
+            // ma per ora ottimizziamo metadata/write che sono i più frequenti.
+
+            Connection conn = client.connect(hostname);
+            Session session = conn.authenticate(auth);
+            DiskShare share = (DiskShare) session.connectShare(shareName);
 
             String fullPath = normalizePath(relativePath + "/" + filename);
             if (!share.fileExists(fullPath)) {
+                share.close(); session.close(); conn.close();
                 throw new StorageException("File non trovato su SMB: " + fullPath, null);
             }
 
             Set<AccessMask> accessMask = new HashSet<>(EnumSet.of(AccessMask.GENERIC_READ));
             Set<SMB2ShareAccess> shareAccess = new HashSet<>(EnumSet.of(SMB2ShareAccess.FILE_SHARE_READ));
 
-            file = share.openFile(fullPath, accessMask, null, shareAccess, SMB2CreateDisposition.FILE_OPEN, null);
+            File file = share.openFile(fullPath, accessMask, null, shareAccess, SMB2CreateDisposition.FILE_OPEN, null);
 
-            // Passiamo le risorse allo stream che ne diventerà responsabile
-            SmbFileInputStream stream = new SmbFileInputStream(connection, session, share, file);
-            success = true;
-            return stream;
+            return new SmbFileInputStream(conn, session, share, file);
 
         } catch (Exception e) {
-            if (e instanceof StorageException) {
-                throw (StorageException) e;
+            throw new StorageException("Errore loadFile SMB", e);
+        }
+    }
+
+    @Override
+    public boolean deleteFile(String relativePath, String filename) {
+        try {
+            DiskShare share = getShare();
+            String fullPath = normalizePath(relativePath + "/" + filename);
+            if (share.fileExists(fullPath)) {
+                share.rm(fullPath);
+                return true;
             }
-            throw new StorageException("Errore apertura stream SMB", e);
-        } finally {
-            // Resource Leak Fix: Se non siamo arrivati alla creazione dello stream (success=false),
-            // dobbiamo chiudere manualmente tutto ciò che è stato aperto finora.
-            if (!success) {
-                if (file != null) try { file.close(); } catch (Exception ignored) {}
-                if (share != null) try { share.close(); } catch (Exception ignored) {}
-                if (session != null) try { session.close(); } catch (Exception ignored) {}
-                if (connection != null) try { connection.close(); } catch (Exception ignored) {}
+            return false;
+        } catch (Exception e) {
+            throw new StorageException("Errore deleteFile SMB", e);
+        }
+    }
+
+    private void mkdirs(DiskShare share, String path) {
+        String[] parts = path.split("\\\\");
+        String currentPath = "";
+        for (String part : parts) {
+            if (part.isEmpty()) continue;
+            currentPath += (currentPath.isEmpty() ? "" : "\\") + part;
+
+            if (!share.folderExists(currentPath)) {
+                share.mkdir(currentPath);
             }
         }
+    }
+
+    private String normalizePath(String path) {
+        if (path.startsWith("/") || path.startsWith("\\")) {
+            path = path.substring(1);
+        }
+        return path.replace('/', '\\');
     }
 
     private static class SmbFileInputStream extends InputStream {
@@ -163,55 +239,5 @@ public class SmbStorage implements StorageInterface {
             try { session.close(); } catch (Exception ignored) {}
             try { connection.close(); } catch (Exception ignored) {}
         }
-    }
-
-    @Override
-    public boolean deleteFile(String relativePath, String filename) {
-        return execute(share -> {
-            String fullPath = normalizePath(relativePath + "/" + filename);
-            if (share.fileExists(fullPath)) {
-                share.rm(fullPath);
-                return true;
-            }
-            return false;
-        });
-    }
-
-    private <T> T execute(SmbAction<T> action) {
-        try (Connection connection = client.connect(hostname)) {
-            AuthenticationContext ac = new AuthenticationContext(auth.getUsername(), auth.getPassword(), auth.getDomain());
-            Session session = connection.authenticate(ac);
-
-            try (DiskShare share = (DiskShare) session.connectShare(shareName)) {
-                return action.run(share);
-            }
-        } catch (Exception e) {
-            throw new StorageException("Errore operazione SMB su " + hostname, e);
-        }
-    }
-
-    private void mkdirs(DiskShare share, String path) {
-        String[] parts = path.split("\\\\");
-        String currentPath = "";
-        for (String part : parts) {
-            if (part.isEmpty()) continue;
-            currentPath += (currentPath.isEmpty() ? "" : "\\") + part;
-
-            if (!share.folderExists(currentPath)) {
-                share.mkdir(currentPath);
-            }
-        }
-    }
-
-    private String normalizePath(String path) {
-        if (path.startsWith("/") || path.startsWith("\\")) {
-            path = path.substring(1);
-        }
-        return path.replace('/', '\\');
-    }
-
-    @FunctionalInterface
-    private interface SmbAction<T> {
-        T run(DiskShare share) throws IOException;
     }
 }

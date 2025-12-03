@@ -29,7 +29,9 @@ class MariaDbMetadataTest {
     void setUp() throws SQLException {
         lenient().when(connection.createStatement()).thenReturn(statement);
 
-        metadata = new MariaDbMetadata("localhost", 3306, "db", "u", "p") {
+        // [FIX] Usiamo il costruttore protected vuoto per evitare
+        // che HikariCP cerchi di connettersi al DB vero durante i test.
+        metadata = new MariaDbMetadata() {
             @Override
             protected Connection getConnection() {
                 return connection;
@@ -70,7 +72,6 @@ class MariaDbMetadataTest {
     void save_ShouldThrowPersonNotFound_WhenFkErrorIntegrityViolation() throws SQLException {
         Expense expense = new Expense("2024", new Person("P", "CF"), ExpenseType.VISITA_MEDICA, "D", "Data");
 
-        // FIX: Simuliamo un SQLState "23xxx" che indica violazione integrità (FK), invece di stringa a caso.
         when(connection.prepareStatement(anyString())).thenThrow(new SQLException("FK Error", "23000", 1452));
 
         assertThrows(PersonNotFoundException.class, () -> metadata.save(expense));
