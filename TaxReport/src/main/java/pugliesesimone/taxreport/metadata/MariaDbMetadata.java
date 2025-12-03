@@ -259,6 +259,23 @@ public class MariaDbMetadata implements MetadataInterface {
         );
     }
 
+    @Override
+    public List<String> getAvailableYears() {
+        List<String> years = new ArrayList<>();
+        String sql = "SELECT DISTINCT year FROM expenses ORDER BY year DESC";
+        try (Connection conn = getConnection();
+             Statement stmt = conn.createStatement();
+             ResultSet rs = stmt.executeQuery(sql)) {
+
+            while(rs.next()) {
+                years.add(rs.getString("year"));
+            }
+        } catch (SQLException e) {
+            throw new StorageException("Errore caricamento anni disponibili", e);
+        }
+        return years;
+    }
+
     private void loadDocumentsForExpense(Connection conn, Expense expense) throws SQLException {
         String sql = "SELECT * FROM documents WHERE expense_id = ?";
         List<Document> docs = new ArrayList<>();

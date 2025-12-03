@@ -220,4 +220,20 @@ public class SQLiteMetadata implements MetadataInterface {
     public List<Expense> findByYear(String year) {
         return List.of(); //todo
     }
+
+    @Override
+    public List<String> getAvailableYears() {
+        List<String> years = new ArrayList<>();
+        String sql = "SELECT DISTINCT year FROM expenses ORDER BY year DESC";
+        try (Connection conn = DriverManager.getConnection(connectionString);
+             Statement stmt = conn.createStatement();
+             ResultSet rs = stmt.executeQuery(sql)) {
+            while (rs.next()) {
+                years.add(rs.getString("year"));
+            }
+        } catch (SQLException e) {
+            throw new StorageException("Errore caricamento anni", e);
+        }
+        return years;
+    }
 }

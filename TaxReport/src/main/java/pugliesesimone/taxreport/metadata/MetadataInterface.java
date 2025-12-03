@@ -13,4 +13,5 @@ public interface MetadataInterface {
     List<Person> findAllPersons();
     Optional<Expense> findById(UUID id);
     List<Expense> findByYear(String year);
+    List<String> getAvailableYears();
 }
