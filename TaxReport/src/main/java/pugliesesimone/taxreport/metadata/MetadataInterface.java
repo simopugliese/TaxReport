@@ -9,9 +9,11 @@ import java.util.UUID;
 
 public interface MetadataInterface {
     void save(Expense expense);
+    void saveAll(List<Expense> expenses);
     void savePerson(Person person);
     List<Person> findAllPersons();
     Optional<Expense> findById(UUID id);
     List<Expense> findByYear(String year);
+    List<Expense> findByYear(String year, int limit, int offset);
     List<String> getAvailableYears();
 }

@@ -49,10 +49,12 @@ public class ComplianceService {
     }
 
     /**
-     * ESEGUE IL REPORT E AGGIORNA IL DB.
-     * Itera sulla lista, calcola il nuovo stato e salva se cambiato.
+     * ESEGUE IL REPORT E AGGIORNA IL DB IN BATCH.
+     * Itera sulla lista, calcola il nuovo stato e salva in blocco alla fine.
      */
     public void validateAndUpdateStatus(List<Expense> expenses) {
+        List<Expense> toUpdate = new ArrayList<>();
+
         for (Expense exp : expenses) {
             // Se l'utente ha forzato BLOCKED, non lo tocchiamo automaticamente
             if (exp.getExpenseState() == ExpenseState.BLOCKED) continue;
@@ -61,20 +63,23 @@ public class ComplianceService {
 
             // Logica di transizione stato:
             // COMPLIANT -> COMPLETED
-            // NON COMPLIANT -> PARTIAL (o resta INITIAL se non ha proprio nulla, ma PARTIAL è più sicuro)
+            // NON COMPLIANT -> PARTIAL
             ExpenseState newState = result.isCompliant() ? ExpenseState.COMPLETED : ExpenseState.PARTIAL;
 
-            // Ottimizzazione: scriviamo su DB solo se lo stato cambia davvero
+            // Scriviamo su DB solo se lo stato cambia davvero
             if (newState != exp.getExpenseState()) {
-                logger.info("Aggiornamento stato spesa {}: {} -> {}", exp.getId(), exp.getExpenseState(), newState);
-
                 exp.setExpenseState(newState);
+                toUpdate.add(exp);
+            }
+        }
 
-                try {
-                    metadata.save(exp); // [IMPORTANTE] Qui avviene la persistenza del nuovo stato
-                } catch (Exception e) {
-                    logger.error("Errore critico salvataggio stato per spesa {}", exp.getId(), e);
-                }
+        // SALVATAGGIO BATCH (Unica transazione efficiente)
+        if (!toUpdate.isEmpty()) {
+            logger.info("Salvataggio batch di {} spese aggiornate.", toUpdate.size());
+            try {
+                metadata.saveAll(toUpdate);
+            } catch (Exception e) {
+                logger.error("Errore critico salvataggio batch stati", e);
             }
         }
     }

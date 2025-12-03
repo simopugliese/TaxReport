@@ -9,7 +9,6 @@ import pugliesesimone.taxreport.metadata.MetadataInterface;
 import pugliesesimone.taxreport.model.*;
 
 import java.util.List;
-import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.Mockito.*;
@@ -82,7 +81,8 @@ class ComplianceServiceTest {
 
         // Assert
         assertEquals(ExpenseState.COMPLETED, expense.getExpenseState());
-        verify(metadata, times(1)).save(expense); // Deve salvare
+        // [FIX] Ora verifichiamo saveAll (batch) invece di save
+        verify(metadata, times(1)).saveAll(anyList());
     }
 
     @Test
@@ -97,7 +97,8 @@ class ComplianceServiceTest {
         service.validateAndUpdateStatus(List.of(expense));
 
         // Assert
-        verify(metadata, never()).save(expense); // NON deve salvare (ottimizzazione)
+        // [FIX] Verifichiamo che saveAll NON venga chiamato
+        verify(metadata, never()).saveAll(anyList());
     }
 
     @Test
@@ -111,6 +112,6 @@ class ComplianceServiceTest {
         // Assert
         // Non deve fare check, non deve salvare.
         verify(ruleEngine, never()).getMandatoryDocuments(anyString(), any());
-        verify(metadata, never()).save(expense);
+        verify(metadata, never()).saveAll(anyList());
     }
 }

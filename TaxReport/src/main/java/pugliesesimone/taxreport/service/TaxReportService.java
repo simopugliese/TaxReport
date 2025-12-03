@@ -15,6 +15,7 @@ import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Executors;
+import java.util.concurrent.Semaphore;
 import java.util.regex.Pattern;
 
 public class TaxReportService {
@@ -52,46 +53,67 @@ public class TaxReportService {
 
     public String runComplianceCheck(String year) {
         try {
-            logger.info("Avvio Compliance Check parallelo per anno {}", year);
+            logger.info("Avvio Compliance Check Scalabile (Batch + Throttling) per anno {}", year);
 
-            // 1. Instanziamo i servizi una volta sola (stateless o cache interna)
             RuleEngine ruleEngine = new RuleEngine(storage);
             ComplianceService complianceService = new ComplianceService(metadata, ruleEngine);
 
-            List<Expense> expenses = metadata.findByYear(year);
-            if (expenses.isEmpty()) {
-                return "Nessuna spesa trovata per l'anno " + year;
-            }
+            // CONFIGURAZIONE SCALABILITÀ
+            int pageSize = 100; // Carica 100 spese alla volta (Paginazione)
+            int offset = 0;
+            long totalProcessed = 0;
 
-            // 2. PARALLEL PROCESSING (Java 21 Virtual Threads)
-            // Usiamo virtual threads perché il task è IO-bound (DB + SMB)
+            // Semaforo per limitare le connessioni DB concorrenti (max 10 come il pool Hikari)
+            // Questo impedisce ai Virtual Thread di saturare il pool JDBC
+            Semaphore dbPermits = new Semaphore(10);
+
             try (var executor = Executors.newVirtualThreadPerTaskExecutor()) {
-                List<CompletableFuture<Void>> futures = expenses.stream()
-                        .map(exp -> CompletableFuture.runAsync(() -> {
-                            try {
-                                complianceService.validateAndUpdateStatus(List.of(exp));
-                            } catch (Exception e) {
-                                logger.error("Errore check parallelo su spesa {}", exp.getId(), e);
-                            }
-                        }, executor))
-                        .toList();
+                List<CompletableFuture<Void>> futures = new ArrayList<>();
 
-                // Aspetta che tutti finiscano
+                while (true) {
+                    // 1. Caricamento Paginato (Main Thread)
+                    List<Expense> page = metadata.findByYear(year, pageSize, offset);
+                    if (page.isEmpty()) break;
+
+                    final List<Expense> currentBatch = page;
+                    final int currentOffset = offset;
+                    totalProcessed += currentBatch.size();
+
+                    // 2. Elaborazione Parallela del Batch
+                    CompletableFuture<Void> future = CompletableFuture.runAsync(() -> {
+                        try {
+                            // Acquisisci permesso DB prima di scrivere
+                            dbPermits.acquire();
+                            try {
+                                // Verifica e Batch Update per questo blocco
+                                complianceService.validateAndUpdateStatus(currentBatch);
+                            } finally {
+                                dbPermits.release();
+                            }
+                        } catch (InterruptedException e) {
+                            Thread.currentThread().interrupt();
+                        } catch (Exception e) {
+                            logger.error("Errore elaborazione batch offset {}", currentOffset, e);
+                        }
+                    }, executor);
+
+                    futures.add(future);
+                    offset += pageSize;
+                }
+
+                // Attesa completamento di tutti i batch
                 CompletableFuture.allOf(futures.toArray(new CompletableFuture[0])).join();
             }
 
-            long completed = expenses.stream().filter(e -> e.getExpenseState() == ExpenseState.COMPLETED).count();
-            long partial = expenses.stream().filter(e -> e.getExpenseState() == ExpenseState.PARTIAL).count();
-            long initial = expenses.stream().filter(e -> e.getExpenseState() == ExpenseState.INITIAL).count();
-
+            // Statistica finale (veloce, usa la cache DB se possibile o una count query)
+            // Qui per semplicità facciamo una stima o una query leggera se necessario,
+            // oppure ritorniamo solo il totale processato.
             return String.format("""
                 Report Anno %s Generato con Successo.
                 -------------------------------------
-                Totale Spese: %d
-                ✅ COMPLETED (Ok): %d
-                ⚠️ PARTIAL (Incomplete): %d
-                🆕 INITIAL (Da verificare): %d
-                """, year, expenses.size(), completed, partial, initial);
+                Totale Spese Processate: %d
+                Modalità: Scalable Batch Processing
+                """, year, totalProcessed);
 
         } catch (Exception e) {
             logger.error("Errore durante compliance check anno {}", year, e);

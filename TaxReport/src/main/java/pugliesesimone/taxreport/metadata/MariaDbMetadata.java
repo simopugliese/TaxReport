@@ -38,15 +38,10 @@ public class MariaDbMetadata implements MetadataInterface, AutoCloseable {
         }
     }
 
-    /**
-     * Costruttore protetto per il TESTING (Mocking).
-     * Evita l'inizializzazione di HikariCP durante i test unitari.
-     */
     protected MariaDbMetadata() {
         this.dataSource = null;
     }
 
-    // Protected per permettere l'override nei test
     protected Connection getConnection() throws SQLException {
         if (dataSource == null) throw new SQLException("DataSource non inizializzato (Testing Mode)");
         return dataSource.getConnection();
@@ -140,6 +135,9 @@ public class MariaDbMetadata implements MetadataInterface, AutoCloseable {
 
     @Override
     public void save(Expense expense) {
+        // Implementazione singola (delega a una lista di 1 per coerenza, o mantieni logica originale)
+        // Per semplicità e robustezza manteniamo la logica originale per il singolo save,
+        // che gestisce anche i documenti.
         String sqlExpense = """
             INSERT INTO expenses (id, year, person_id, type, description, raw_date, state)
             VALUES (?, ?, ?, ?, ?, ?, ?)
@@ -153,10 +151,7 @@ public class MariaDbMetadata implements MetadataInterface, AutoCloseable {
             """;
 
         String sqlDeleteDocs = "DELETE FROM documents WHERE expense_id = ?";
-
-        String sqlInsertDoc = """
-            INSERT INTO documents (id, expense_id, doc_type, relative_path)
-            VALUES (?, ?, ?, ?)""";
+        String sqlInsertDoc = "INSERT INTO documents (id, expense_id, doc_type, relative_path) VALUES (?, ?, ?, ?)";
 
         try (Connection conn = getConnection()) {
             conn.setAutoCommit(false);
@@ -171,7 +166,7 @@ public class MariaDbMetadata implements MetadataInterface, AutoCloseable {
                 ps.setString(7, expense.getExpenseState().name());
                 ps.executeUpdate();
             } catch (SQLException e) {
-                try { conn.rollback(); } catch (SQLException ex) { /* Log */ }
+                try { conn.rollback(); } catch (SQLException ex) { }
                 String state = e.getSQLState();
                 if (state != null && state.startsWith(SQL_STATE_INTEGRITY_VIOLATION)) {
                     throw new PersonNotFoundException("Persona non trovata (FK violation): " + expense.getPerson().getId());
@@ -183,7 +178,7 @@ public class MariaDbMetadata implements MetadataInterface, AutoCloseable {
                 ps.setString(1, expense.getId().toString());
                 ps.executeUpdate();
             } catch (SQLException e) {
-                try { conn.rollback(); } catch (SQLException ex) { /* Log */ }
+                try { conn.rollback(); } catch (SQLException ex) { }
                 throw e;
             }
 
@@ -198,7 +193,7 @@ public class MariaDbMetadata implements MetadataInterface, AutoCloseable {
                     }
                     ps.executeBatch();
                 } catch (SQLException e) {
-                    try { conn.rollback(); } catch (SQLException ex) { /* Log */ }
+                    try { conn.rollback(); } catch (SQLException ex) { }
                     throw e;
                 }
             }
@@ -207,6 +202,44 @@ public class MariaDbMetadata implements MetadataInterface, AutoCloseable {
 
         } catch (SQLException e) {
             throw new StorageException("Errore save su MariaDB", e);
+        }
+    }
+
+    @Override
+    public void saveAll(List<Expense> expenses) {
+        if (expenses == null || expenses.isEmpty()) return;
+
+        // Query ottimizzata per batch update dello stato (scenario principale del Compliance Check)
+        // Se serve aggiornare tutto, basta aggiungere gli altri campi nel SET
+        String sqlExpense = """
+            INSERT INTO expenses (id, year, person_id, type, description, raw_date, state)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            ON DUPLICATE KEY UPDATE
+                state = VALUES(state)
+            """;
+
+        try (Connection conn = getConnection()) {
+            conn.setAutoCommit(false);
+
+            try (PreparedStatement ps = conn.prepareStatement(sqlExpense)) {
+                for (Expense expense : expenses) {
+                    ps.setString(1, expense.getId().toString());
+                    ps.setString(2, expense.getYear());
+                    ps.setString(3, expense.getPerson().getId().toString());
+                    ps.setString(4, expense.getExpenseType().name());
+                    ps.setString(5, expense.getDescription());
+                    ps.setString(6, expense.getRawDate());
+                    ps.setString(7, expense.getExpenseState().name());
+                    ps.addBatch();
+                }
+                ps.executeBatch();
+                conn.commit();
+            } catch (SQLException e) {
+                try { conn.rollback(); } catch (SQLException ex) { }
+                throw e;
+            }
+        } catch (SQLException e) {
+            throw new StorageException("Errore Batch SaveAll su MariaDB", e);
         }
     }
 
@@ -236,68 +269,58 @@ public class MariaDbMetadata implements MetadataInterface, AutoCloseable {
 
     @Override
     public List<Expense> findByYear(String year) {
+        // Implementazione originale (senza limiti)
+        // Nota: Potrebbe essere inefficiente con molti dati, ma è richiesto dall'interfaccia
+        return findByYearInternal(year, -1, -1);
+    }
+
+    @Override
+    public List<Expense> findByYear(String year, int limit, int offset) {
+        return findByYearInternal(year, limit, offset);
+    }
+
+    private List<Expense> findByYearInternal(String year, int limit, int offset) {
         Map<UUID, Expense> expenseMap = new LinkedHashMap<>();
 
-        String sql = """
+        StringBuilder sqlBuilder = new StringBuilder("""
             SELECT 
                 e.id AS e_id, e.year, e.type, e.description, e.raw_date, e.state,
-                p.id AS p_id, p.name AS p_name, p.fiscal_code AS p_fc,
-                d.id AS d_id, d.doc_type, d.relative_path
+                p.id AS p_id, p.name AS p_name, p.fiscal_code AS p_fc
             FROM expenses e
             JOIN persons p ON e.person_id = p.id
-            LEFT JOIN documents d ON e.id = d.expense_id
             WHERE e.year = ?
             ORDER BY e.id DESC
-        """;
+        """);
+
+        if (limit > 0) {
+            sqlBuilder.append(" LIMIT ? OFFSET ?");
+        }
 
         try (Connection conn = getConnection();
-             PreparedStatement ps = conn.prepareStatement(sql)) {
+             PreparedStatement ps = conn.prepareStatement(sqlBuilder.toString())) {
 
             ps.setString(1, year);
+            if (limit > 0) {
+                ps.setInt(2, limit);
+                ps.setInt(3, offset);
+            }
 
             try (ResultSet rs = ps.executeQuery()) {
                 while (rs.next()) {
-                    UUID expenseId = UUID.fromString(rs.getString("e_id"));
-
-                    Expense expense = expenseMap.computeIfAbsent(expenseId, k -> {
-                        try {
-                            Person person = new Person(
-                                    UUID.fromString(rs.getString("p_id")),
-                                    rs.getString("p_name"),
-                                    rs.getString("p_fc")
-                            );
-                            return new Expense(
-                                    k,
-                                    rs.getString("year"),
-                                    person,
-                                    ExpenseType.valueOf(rs.getString("type")),
-                                    rs.getString("description"),
-                                    rs.getString("raw_date"),
-                                    ExpenseState.valueOf(rs.getString("state"))
-                            );
-                        } catch (SQLException e) {
-                            throw new RuntimeException("Errore mapping resultSet", e);
-                        }
-                    });
-
-                    String docIdStr = rs.getString("d_id");
-                    if (docIdStr != null) {
-                        Document doc = new Document(
-                                UUID.fromString(docIdStr),
-                                DocumentType.valueOf(rs.getString("doc_type")),
-                                rs.getString("relative_path")
-                        );
-                        expense.addDocument(doc);
-                    }
+                    // Mapping base Expense (senza duplicazione di logica)
+                    Expense expense = mapRowToExpense(rs);
+                    expenseMap.put(expense.getId(), expense);
                 }
             }
+
+            // Ottimizzazione: Caricamento documenti in batch per le spese trovate
+            // (Evita il problema N+1 select se possibile, qui semplificato)
+            if (!expenseMap.isEmpty()) {
+                loadDocumentsForExpenses(conn, expenseMap);
+            }
+
         } catch (SQLException e) {
             throw new StorageException("Errore ricerca spese per anno: " + year, e);
-        } catch (RuntimeException e) {
-            if (e.getCause() instanceof SQLException) {
-                throw new StorageException("Errore SQL durante il mapping", e.getCause());
-            }
-            throw e;
         }
 
         return new ArrayList<>(expenseMap.values());
@@ -322,12 +345,13 @@ public class MariaDbMetadata implements MetadataInterface, AutoCloseable {
 
     private Expense mapRowToExpense(ResultSet rs) throws SQLException {
         Person person = new Person(
-                UUID.fromString(rs.getString("person_id")),
-                rs.getString("person_name"),
-                rs.getString("person_fc")
+                UUID.fromString(rs.getString("p_id") != null ? rs.getString("p_id") : rs.getString("person_id")),
+                rs.getString("p_name") != null ? rs.getString("p_name") : rs.getString("person_name"),
+                rs.getString("p_fc") != null ? rs.getString("p_fc") : rs.getString("person_fc")
         );
+        String idStr = rs.getString("e_id") != null ? rs.getString("e_id") : rs.getString("id");
         return new Expense(
-                UUID.fromString(rs.getString("id")),
+                UUID.fromString(idStr),
                 rs.getString("year"),
                 person,
                 ExpenseType.valueOf(rs.getString("type")),
@@ -353,5 +377,39 @@ public class MariaDbMetadata implements MetadataInterface, AutoCloseable {
             }
         }
         expense.setDocuments(docs);
+    }
+
+    private void loadDocumentsForExpenses(Connection conn, Map<UUID, Expense> expenseMap) throws SQLException {
+        if (expenseMap.isEmpty()) return;
+
+        // Costruiamo una clausola IN (...) dinamica
+        // Nota: Se la pagina è grande (es. 1000), meglio fare più query o usare tabelle temporanee,
+        // ma per 50-100 elementi va bene.
+        StringBuilder inClause = new StringBuilder();
+        for (int i = 0; i < expenseMap.size(); i++) inClause.append("?,");
+        inClause.setLength(inClause.length() - 1); // Rimuovi ultima virgola
+
+        String sql = "SELECT * FROM documents WHERE expense_id IN (" + inClause + ")";
+
+        try (PreparedStatement ps = conn.prepareStatement(sql)) {
+            int index = 1;
+            for (UUID id : expenseMap.keySet()) {
+                ps.setString(index++, id.toString());
+            }
+
+            try (ResultSet rs = ps.executeQuery()) {
+                while (rs.next()) {
+                    UUID expenseId = UUID.fromString(rs.getString("expense_id"));
+                    Expense exp = expenseMap.get(expenseId);
+                    if (exp != null) {
+                        exp.addDocument(new Document(
+                                UUID.fromString(rs.getString("id")),
+                                DocumentType.valueOf(rs.getString("doc_type")),
+                                rs.getString("relative_path")
+                        ));
+                    }
+                }
+            }
+        }
     }
 }
