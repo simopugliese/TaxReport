@@ -6,9 +6,7 @@ import pugliesesimone.taxreport.exception.StorageException;
 import pugliesesimone.taxreport.model.*;
 
 import java.sql.*;
-import java.util.ArrayList;
-import java.util.List;
-import java.util.Optional;
+import java.util.*;
 import java.util.UUID;
 
 public class MariaDbMetadata implements MetadataInterface {
@@ -213,15 +211,24 @@ public class MariaDbMetadata implements MetadataInterface {
         return Optional.empty();
     }
 
-    // NUOVO: Implementazione findByYear
+    // [OPTIMIZED] Risolto problema N+1 con una singola query JOIN
     @Override
     public List<Expense> findByYear(String year) {
-        List<Expense> expenses = new ArrayList<>();
+        // Usiamo una mappa per raggruppare i documenti sotto la stessa spesa
+        // LinkedHashMap mantiene l'ordine di inserimento (quindi quello della query)
+        Map<UUID, Expense> expenseMap = new LinkedHashMap<>();
+
         String sql = """
-            SELECT e.*, p.name as person_name, p.fiscal_code as person_fc
+            SELECT 
+                e.id AS e_id, e.year, e.type, e.description, e.raw_date, e.state,
+                p.id AS p_id, p.name AS p_name, p.fiscal_code AS p_fc,
+                d.id AS d_id, d.doc_type, d.relative_path
             FROM expenses e
             JOIN persons p ON e.person_id = p.id
-            WHERE e.year = ?""";
+            LEFT JOIN documents d ON e.id = d.expense_id
+            WHERE e.year = ?
+            ORDER BY e.id DESC
+        """;
 
         try (Connection conn = getConnection();
              PreparedStatement ps = conn.prepareStatement(sql)) {
@@ -230,33 +237,52 @@ public class MariaDbMetadata implements MetadataInterface {
 
             try (ResultSet rs = ps.executeQuery()) {
                 while (rs.next()) {
-                    Expense e = mapRowToExpense(rs);
-                    loadDocumentsForExpense(conn, e); // Carica i documenti per ogni spesa
-                    expenses.add(e);
+                    UUID expenseId = UUID.fromString(rs.getString("e_id"));
+
+                    // Se la spesa è già nella mappa, usala; altrimenti creala
+                    Expense expense = expenseMap.computeIfAbsent(expenseId, k -> {
+                        try {
+                            Person person = new Person(
+                                    UUID.fromString(rs.getString("p_id")),
+                                    rs.getString("p_name"),
+                                    rs.getString("p_fc")
+                            );
+                            return new Expense(
+                                    k,
+                                    rs.getString("year"),
+                                    person,
+                                    ExpenseType.valueOf(rs.getString("type")),
+                                    rs.getString("description"),
+                                    rs.getString("raw_date"),
+                                    ExpenseState.valueOf(rs.getString("state"))
+                            );
+                        } catch (SQLException e) {
+                            throw new RuntimeException("Errore mapping resultSet", e);
+                        }
+                    });
+
+                    // Se c'è un documento (LEFT JOIN non nullo), aggiungilo
+                    String docIdStr = rs.getString("d_id");
+                    if (docIdStr != null) {
+                        Document doc = new Document(
+                                UUID.fromString(docIdStr),
+                                DocumentType.valueOf(rs.getString("doc_type")),
+                                rs.getString("relative_path")
+                        );
+                        expense.addDocument(doc);
+                    }
                 }
             }
         } catch (SQLException e) {
             throw new StorageException("Errore ricerca spese per anno: " + year, e);
+        } catch (RuntimeException e) {
+            if (e.getCause() instanceof SQLException) {
+                throw new StorageException("Errore SQL durante il mapping", e.getCause());
+            }
+            throw e;
         }
-        return expenses;
-    }
 
-    // Helpers per evitare duplicazione codice
-    private Expense mapRowToExpense(ResultSet rs) throws SQLException {
-        Person person = new Person(
-                UUID.fromString(rs.getString("person_id")),
-                rs.getString("person_name"),
-                rs.getString("person_fc")
-        );
-        return new Expense(
-                UUID.fromString(rs.getString("id")),
-                rs.getString("year"),
-                person,
-                ExpenseType.valueOf(rs.getString("type")),
-                rs.getString("description"),
-                rs.getString("raw_date"),
-                ExpenseState.valueOf(rs.getString("state"))
-        );
+        return new ArrayList<>(expenseMap.values());
     }
 
     @Override
@@ -274,6 +300,24 @@ public class MariaDbMetadata implements MetadataInterface {
             throw new StorageException("Errore caricamento anni disponibili", e);
         }
         return years;
+    }
+
+    // Helper usati da findById (rimasti per compatibilità)
+    private Expense mapRowToExpense(ResultSet rs) throws SQLException {
+        Person person = new Person(
+                UUID.fromString(rs.getString("person_id")),
+                rs.getString("person_name"),
+                rs.getString("person_fc")
+        );
+        return new Expense(
+                UUID.fromString(rs.getString("id")),
+                rs.getString("year"),
+                person,
+                ExpenseType.valueOf(rs.getString("type")),
+                rs.getString("description"),
+                rs.getString("raw_date"),
+                ExpenseState.valueOf(rs.getString("state"))
+        );
     }
 
     private void loadDocumentsForExpense(Connection conn, Expense expense) throws SQLException {
