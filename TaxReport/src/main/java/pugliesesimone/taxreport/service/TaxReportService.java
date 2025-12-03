@@ -31,6 +31,10 @@ public class TaxReportService {
         return metadata;
     }
 
+    public StorageInterface getStorage() {
+        return storage;
+    }
+
     // --- Metodi Anagrafica ---
     public void registerPerson(Person person) {
         try {
