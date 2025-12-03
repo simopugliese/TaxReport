@@ -24,11 +24,20 @@ public class MariaDbMetadata implements MetadataInterface, AutoCloseable {
             config.setPassword(password);
             config.setDriverClassName("org.mariadb.jdbc.Driver");
 
-            // Tuning per performance e stabilità
+            // Tuning per performance e stabilità su rete (Raspberry Pi)
             config.setMaximumPoolSize(10);
             config.setMinimumIdle(2);
-            config.setIdleTimeout(60000);
-            config.setConnectionTimeout(5000);
+
+            // [FIX] Aumentato timeout a 30s (5s era troppo aggressivo per il Pi)
+            config.setConnectionTimeout(30000);
+
+            // Ridotto idle timeout per evitare che le connessioni restino appese se il firewall le killa
+            config.setIdleTimeout(300000); // 5 minuti
+            config.setMaxLifetime(600000); // 10 minuti (rigenera le connessioni più spesso)
+
+            // [FIX] Query di test esplicita per evitare errori del driver su connessioni chiuse
+            config.setConnectionTestQuery("SELECT 1");
+
             config.setPoolName("TaxReportPool");
 
             this.dataSource = new HikariDataSource(config);
@@ -135,9 +144,6 @@ public class MariaDbMetadata implements MetadataInterface, AutoCloseable {
 
     @Override
     public void save(Expense expense) {
-        // Implementazione singola (delega a una lista di 1 per coerenza, o mantieni logica originale)
-        // Per semplicità e robustezza manteniamo la logica originale per il singolo save,
-        // che gestisce anche i documenti.
         String sqlExpense = """
             INSERT INTO expenses (id, year, person_id, type, description, raw_date, state)
             VALUES (?, ?, ?, ?, ?, ?, ?)
@@ -209,8 +215,6 @@ public class MariaDbMetadata implements MetadataInterface, AutoCloseable {
     public void saveAll(List<Expense> expenses) {
         if (expenses == null || expenses.isEmpty()) return;
 
-        // Query ottimizzata per batch update dello stato (scenario principale del Compliance Check)
-        // Se serve aggiornare tutto, basta aggiungere gli altri campi nel SET
         String sqlExpense = """
             INSERT INTO expenses (id, year, person_id, type, description, raw_date, state)
             VALUES (?, ?, ?, ?, ?, ?, ?)
@@ -269,8 +273,6 @@ public class MariaDbMetadata implements MetadataInterface, AutoCloseable {
 
     @Override
     public List<Expense> findByYear(String year) {
-        // Implementazione originale (senza limiti)
-        // Nota: Potrebbe essere inefficiente con molti dati, ma è richiesto dall'interfaccia
         return findByYearInternal(year, -1, -1);
     }
 
@@ -307,14 +309,11 @@ public class MariaDbMetadata implements MetadataInterface, AutoCloseable {
 
             try (ResultSet rs = ps.executeQuery()) {
                 while (rs.next()) {
-                    // Mapping base Expense (senza duplicazione di logica)
                     Expense expense = mapRowToExpense(rs);
                     expenseMap.put(expense.getId(), expense);
                 }
             }
 
-            // Ottimizzazione: Caricamento documenti in batch per le spese trovate
-            // (Evita il problema N+1 select se possibile, qui semplificato)
             if (!expenseMap.isEmpty()) {
                 loadDocumentsForExpenses(conn, expenseMap);
             }
@@ -382,12 +381,9 @@ public class MariaDbMetadata implements MetadataInterface, AutoCloseable {
     private void loadDocumentsForExpenses(Connection conn, Map<UUID, Expense> expenseMap) throws SQLException {
         if (expenseMap.isEmpty()) return;
 
-        // Costruiamo una clausola IN (...) dinamica
-        // Nota: Se la pagina è grande (es. 1000), meglio fare più query o usare tabelle temporanee,
-        // ma per 50-100 elementi va bene.
         StringBuilder inClause = new StringBuilder();
         for (int i = 0; i < expenseMap.size(); i++) inClause.append("?,");
-        inClause.setLength(inClause.length() - 1); // Rimuovi ultima virgola
+        inClause.setLength(inClause.length() - 1);
 
         String sql = "SELECT * FROM documents WHERE expense_id IN (" + inClause + ")";
 
