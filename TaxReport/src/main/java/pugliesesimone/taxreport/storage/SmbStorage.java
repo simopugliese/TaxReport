@@ -134,16 +134,10 @@ public class SmbStorage implements StorageInterface, AutoCloseable {
         }
     }
 
+    //TODO: fa una connessione per ogni file -- lento
     @Override
     public InputStream loadFile(String relativePath, String filename) {
         try {
-            // Nota: Non usiamo 'getShare()' qui perché dobbiamo aprire uno stream
-            // che vivrà più a lungo di questo metodo.
-            // Per evitare problemi di concorrenza complessi sugli stream aperti,
-            // apriamo una connessione dedicata SOLO per la lettura (pattern Read-Isolated).
-            // Se le performance di lettura sono un problema, si può implementare un pool di connessioni,
-            // ma per ora ottimizziamo metadata/write che sono i più frequenti.
-
             Connection conn = client.connect(hostname);
             Session session = conn.authenticate(auth);
             DiskShare share = (DiskShare) session.connectShare(shareName);
