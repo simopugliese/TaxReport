@@ -23,21 +23,12 @@ public class MariaDbMetadata implements MetadataInterface, AutoCloseable {
             config.setUsername(user);
             config.setPassword(password);
             config.setDriverClassName("org.mariadb.jdbc.Driver");
-
-            // Tuning per performance e stabilità su rete (Raspberry Pi)
             config.setMaximumPoolSize(10);
             config.setMinimumIdle(2);
-
-            // [FIX] Aumentato timeout a 30s (5s era troppo aggressivo per il Pi)
             config.setConnectionTimeout(30000);
-
-            // Ridotto idle timeout per evitare che le connessioni restino appese se il firewall le killa
-            config.setIdleTimeout(300000); // 5 minuti
-            config.setMaxLifetime(600000); // 10 minuti (rigenera le connessioni più spesso)
-
-            // [FIX] Query di test esplicita per evitare errori del driver su connessioni chiuse
+            config.setIdleTimeout(300000);
+            config.setMaxLifetime(600000);
             config.setConnectionTestQuery("SELECT 1");
-
             config.setPoolName("TaxReportPool");
 
             this.dataSource = new HikariDataSource(config);

@@ -24,9 +24,6 @@ public class ComplianceService {
         this.ruleEngine = ruleEngine;
     }
 
-    /**
-     * Verifica una singola spesa (sola lettura).
-     */
     public ComplianceResult checkCompliance(Expense expense) {
         List<DocumentType> requiredTypes = ruleEngine.getMandatoryDocuments(expense.getYear(), expense.getExpenseType());
 
@@ -48,32 +45,22 @@ public class ComplianceService {
         return new ComplianceResult(missing.isEmpty(), missing);
     }
 
-    /**
-     * ESEGUE IL REPORT E AGGIORNA IL DB IN BATCH.
-     * Itera sulla lista, calcola il nuovo stato e salva in blocco alla fine.
-     */
     public void validateAndUpdateStatus(List<Expense> expenses) {
         List<Expense> toUpdate = new ArrayList<>();
 
         for (Expense exp : expenses) {
-            // Se l'utente ha forzato BLOCKED, non lo tocchiamo automaticamente
             if (exp.getExpenseState() == ExpenseState.BLOCKED) continue;
 
             ComplianceResult result = checkCompliance(exp);
 
-            // Logica di transizione stato:
-            // COMPLIANT -> COMPLETED
-            // NON COMPLIANT -> PARTIAL
             ExpenseState newState = result.isCompliant() ? ExpenseState.COMPLETED : ExpenseState.PARTIAL;
 
-            // Scriviamo su DB solo se lo stato cambia davvero
             if (newState != exp.getExpenseState()) {
                 exp.setExpenseState(newState);
                 toUpdate.add(exp);
             }
         }
 
-        // SALVATAGGIO BATCH (Unica transazione efficiente)
         if (!toUpdate.isEmpty()) {
             logger.info("Salvataggio batch di {} spese aggiornate.", toUpdate.size());
             try {

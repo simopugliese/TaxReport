@@ -75,9 +75,6 @@ class SmbStorageTest {
         when(share.openFile(anyString(), any(), any(), any(), eq(SMB2CreateDisposition.FILE_OPEN), any()))
                 .thenReturn(smbFile);
 
-        // [FIX] RIMOSSO lo stubbing di smbFile.read() che causava UnnecessaryStubbingException
-        // Il test controlla solo che lo stream venga aperto, non legge nulla.
-
         InputStream result = storage.loadFile("2024", "file.txt");
 
         assertNotNull(result);

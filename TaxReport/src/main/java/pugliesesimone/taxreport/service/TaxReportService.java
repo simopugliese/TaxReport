@@ -110,10 +110,11 @@ public class TaxReportService {
         }
     }
 
-    //TODO: gemini mi ha segnalato un caso limite. Se il server crasha esattamente
-    //tra il metadata.save(expense) e la validazione, ti ritrovi una spesa salvata
-    //ma con stato di compliance non calcolato (o vecchio). Questo non è un problema
-    //se ricalcoli il report, però andrebbe sistemato
+    /*TODO: gemini mi ha segnalato un caso limite. Se il server crasha esattamente
+    tra il metadata.save(expense) e la validazione, ti ritrovi una spesa salvata
+    ma con stato di compliance non calcolato (o vecchio). Questo non è un problema
+    se ricalcoli il report, però andrebbe sistemato
+    */
     public void registerExpense(Expense expense, List<Attachment> attachments) {
         List<Document> savedDocuments = new ArrayList<>();
 

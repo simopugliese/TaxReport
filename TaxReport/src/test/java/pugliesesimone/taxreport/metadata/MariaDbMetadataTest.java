@@ -9,7 +9,6 @@ import pugliesesimone.taxreport.exception.PersonNotFoundException;
 import pugliesesimone.taxreport.model.*;
 
 import java.sql.*;
-import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.anyString;
@@ -29,8 +28,6 @@ class MariaDbMetadataTest {
     void setUp() throws SQLException {
         lenient().when(connection.createStatement()).thenReturn(statement);
 
-        // [FIX] Usiamo il costruttore protected vuoto per evitare
-        // che HikariCP cerchi di connettersi al DB vero durante i test.
         metadata = new MariaDbMetadata() {
             @Override
             protected Connection getConnection() {
@@ -41,16 +38,12 @@ class MariaDbMetadataTest {
 
     @Test
     void save_ShouldExecuteUpdateAndCommit() throws SQLException {
-        // Arrange
         Expense expense = new Expense("2024", new Person("P", "CF"), ExpenseType.VISITA_MEDICA, "D", "Data");
         expense.addDocument(new Document(DocumentType.FATTURA, "path"));
 
         when(connection.prepareStatement(anyString())).thenReturn(preparedStatement);
-
-        // Act
         metadata.save(expense);
 
-        // Assert
         verify(connection).setAutoCommit(false);
         verify(preparedStatement, atLeast(2)).executeUpdate();
         verify(preparedStatement, times(1)).executeBatch();

@@ -27,7 +27,6 @@ public class SmbStorage implements StorageInterface, AutoCloseable {
     private final AuthenticationContext auth;
     private final SMBClient client;
 
-    // Connection caching
     private Connection cachedConnection;
     private Session cachedSession;
     private DiskShare cachedShare;
@@ -37,10 +36,9 @@ public class SmbStorage implements StorageInterface, AutoCloseable {
         this.hostname = hostname;
         this.shareName = shareName;
         this.auth = new AuthenticationContext(username, password.toCharArray(), null);
-        this.client = new SMBClient(); // Config default
+        this.client = new SMBClient();
     }
 
-    // Lazy initialization & Reconnection Logic
     private DiskShare getShare() {
         lock.lock();
         try {
@@ -52,7 +50,7 @@ public class SmbStorage implements StorageInterface, AutoCloseable {
             }
             return cachedShare;
         } catch (Exception e) {
-            closeResources(); // Cleanup parziale se fallisce
+            closeResources();
             throw new StorageException("Errore connessione SMB a " + hostname, e);
         } finally {
             lock.unlock();
