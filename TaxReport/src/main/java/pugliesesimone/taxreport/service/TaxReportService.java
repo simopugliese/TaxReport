@@ -58,20 +58,16 @@ public class TaxReportService {
             RuleEngine ruleEngine = new RuleEngine(storage);
             ComplianceService complianceService = new ComplianceService(metadata, ruleEngine);
 
-            // CONFIGURAZIONE SCALABILITÀ
-            int pageSize = 100; // Carica 100 spese alla volta (Paginazione)
+            int pageSize = 100;
             int offset = 0;
             long totalProcessed = 0;
 
-            // Semaforo per limitare le connessioni DB concorrenti (max 10 come il pool Hikari)
-            // Questo impedisce ai Virtual Thread di saturare il pool JDBC
             Semaphore dbPermits = new Semaphore(10);
 
             try (var executor = Executors.newVirtualThreadPerTaskExecutor()) {
                 List<CompletableFuture<Void>> futures = new ArrayList<>();
 
                 while (true) {
-                    // 1. Caricamento Paginato (Main Thread)
                     List<Expense> page = metadata.findByYear(year, pageSize, offset);
                     if (page.isEmpty()) break;
 
@@ -79,13 +75,10 @@ public class TaxReportService {
                     final int currentOffset = offset;
                     totalProcessed += currentBatch.size();
 
-                    // 2. Elaborazione Parallela del Batch
                     CompletableFuture<Void> future = CompletableFuture.runAsync(() -> {
                         try {
-                            // Acquisisci permesso DB prima di scrivere
                             dbPermits.acquire();
                             try {
-                                // Verifica e Batch Update per questo blocco
                                 complianceService.validateAndUpdateStatus(currentBatch);
                             } finally {
                                 dbPermits.release();
@@ -101,13 +94,9 @@ public class TaxReportService {
                     offset += pageSize;
                 }
 
-                // Attesa completamento di tutti i batch
                 CompletableFuture.allOf(futures.toArray(new CompletableFuture[0])).join();
             }
 
-            // Statistica finale (veloce, usa la cache DB se possibile o una count query)
-            // Qui per semplicità facciamo una stima o una query leggera se necessario,
-            // oppure ritorniamo solo il totale processato.
             return String.format("""
                 Report Anno %s Generato con Successo.
                 -------------------------------------
@@ -121,6 +110,10 @@ public class TaxReportService {
         }
     }
 
+    //TODO: gemini mi ha segnalato un caso limite. Se il server crasha esattamente
+    //tra il metadata.save(expense) e la validazione, ti ritrovi una spesa salvata
+    //ma con stato di compliance non calcolato (o vecchio). Questo non è un problema
+    //se ricalcoli il report, però andrebbe sistemato
     public void registerExpense(Expense expense, List<Attachment> attachments) {
         List<Document> savedDocuments = new ArrayList<>();
 
@@ -172,7 +165,6 @@ public class TaxReportService {
             metadata.save(expense);
             logger.info("Spesa {} salvata in: {}", expense.getId(), folderPath);
 
-            // Async validation post-save
             try {
                 RuleEngine ruleEngine = new RuleEngine(storage);
                 ComplianceService compliance = new ComplianceService(metadata, ruleEngine);
