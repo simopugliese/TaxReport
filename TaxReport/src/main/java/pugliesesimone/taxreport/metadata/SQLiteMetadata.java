@@ -12,6 +12,8 @@ import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
+
+//TODO: andrebbe implementato e testato bene, qui è solo parziale e a scopo dimostrativo
 public class SQLiteMetadata implements MetadataInterface {
     private final String connectionString;
 
@@ -137,7 +139,6 @@ public class SQLiteMetadata implements MetadataInterface {
 
     @Override
     public void saveAll(List<Expense> expenses) {
-        // Implementazione semplice iterativa per SQLite (usato principalmente per test)
         for (Expense e : expenses) {
             save(e);
         }
@@ -207,7 +208,6 @@ public class SQLiteMetadata implements MetadataInterface {
 
     @Override
     public void savePerson(Person person) {
-        // Implementazione stub per test
         try (Connection conn = DriverManager.getConnection(connectionString);
              PreparedStatement ps = conn.prepareStatement("INSERT OR IGNORE INTO persons (id, name, fiscal_code) VALUES (?, ?, ?)")) {
             ps.setString(1, person.getId().toString());
@@ -231,9 +231,6 @@ public class SQLiteMetadata implements MetadataInterface {
 
     @Override
     public List<Expense> findByYear(String year, int limit, int offset) {
-        // Implementazione basilare per test
-        // Nota: Per test di integrazione seri, dovresti copiare la logica di MariaDbMetadata
-        // adattando la sintassi LIMIT/OFFSET se necessario (SQLite supporta LIMIT X OFFSET Y)
         return new ArrayList<>();
     }
 
